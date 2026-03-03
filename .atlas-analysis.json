@@ -1,0 +1,118 @@
+{
+  "projectType": "framework",
+  "projectName": "Caddy Defender",
+  "projectDescription": "Caddy middleware to block or manipulate requests from AI scrapers and cloud services using IP range filtering.",
+  "theme": "aspen",
+  "primaryColor": "#2563eb",
+  "lightColor": "#3b82f6",
+  "darkColor": "#1e40af",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/responders",
+              "concepts/ip-ranges",
+              "concepts/whitelisting"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/caddyfile",
+              "configuration/json",
+              "configuration/rate-limiting"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/docker-setup",
+              "guides/xcaddy-build",
+              "guides/advanced-build"
+            ]
+          },
+          {
+            "group": "Examples",
+            "pages": [
+              "examples/block",
+              "examples/custom-response",
+              "examples/garbage",
+              "examples/tarpit",
+              "examples/redirect",
+              "examples/rate-limiting",
+              "examples/combinations"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Responders",
+            "pages": [
+              "api/responders/block",
+              "api/responders/custom",
+              "api/responders/drop",
+              "api/responders/garbage",
+              "api/responders/redirect",
+              "api/responders/rate-limit",
+              "api/responders/tarpit"
+            ]
+          },
+          {
+            "group": "IP Ranges",
+            "pages": [
+              "api/ip-ranges/overview",
+              "api/ip-ranges/cloud-providers",
+              "api/ip-ranges/ai-services",
+              "api/ip-ranges/custom"
+            ]
+          },
+          {
+            "group": "Fetchers",
+            "pages": [
+              "api/fetchers/overview",
+              "api/fetchers/custom-fetcher"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Block or manipulate requests based on IP ranges",
+    "Predefined IP ranges for AI services (OpenAI, DeepSeek, GitHub Copilot)",
+    "Multiple response strategies (block, custom, drop, garbage, redirect, tarpit, rate-limit)",
+    "Support for custom CIDR ranges and whitelist functionality",
+    "High-performance IP matching using Balanced ART routing table",
+    "Integration with caddy-ratelimit for advanced rate limiting",
+    "Docker support with pre-built images",
+    "Extensible IP range fetchers for cloud providers"
+  ],
+  "publicApiSurface": [
+    "defender <responder> - Main Caddyfile directive",
+    "ranges - Configure IP ranges (CIDR or predefined keys)",
+    "message - Custom response message (for 'custom' responder)",
+    "status_code - HTTP status code (for 'custom' responder)",
+    "url - Redirect URL (for 'redirect' responder)",
+    "whitelist - Whitelist specific IPs from blocked ranges",
+    "serve_ignore - Serve robots.txt with Disallow directive",
+    "tarpit_config - Configuration for tarpit responder",
+    "Responder types: block, custom, drop, garbage, redirect, ratelimit, tarpit",
+    "Predefined ranges: aws, gcloud, azurepubliccloud, openai, deepseek, githubcopilot, mistral, vultr, cloudflare, digitalocean, linode, oci, aliyun, vpn, private, all",
+    "Build-time ranges: tor, asn"
+  ]
+}
