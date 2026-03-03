@@ -83,7 +83,7 @@ defender block {
 
 ## Microsoft Azure
 
-<ParamField path="azure" type="string">
+<ParamField path="azurepubliccloud" type="string">
   Azure Public Cloud IP ranges for Azure services.
   
   **Source**: [Azure Download Center](https://www.microsoft.com/en-us/download/details.aspx?id=56519)
@@ -95,7 +95,7 @@ defender block {
 
 ```caddy
 defender block {
-    ranges azure
+    ranges azurepubliccloud
 }
 ```
 
@@ -205,6 +205,40 @@ defender block {
 }
 ```
 
+## Huawei Cloud
+
+<ParamField path="huawei" type="string">
+  Huawei Cloud IP ranges for Huawei Cloud services.
+  
+  **Source**: [Huawei Cloud IP Ranges](https://developer.huaweicloud.com/intl/en-us/endpoint)
+  
+  **Fetcher**: `fetchers.HuaweiCloudFetcher` in `ranges/fetchers/huawei.go`
+</ParamField>
+
+```caddy
+defender block {
+    ranges huawei
+}
+```
+
+## VPN Services
+
+<ParamField path="vpn" type="string">
+  Known VPN service provider IP ranges.
+  
+  **Source**: Curated list of known VPN provider IP ranges
+  
+  **Fetcher**: `fetchers.VPNFetcher` in `ranges/fetchers/vpn.go`
+  
+  **Use Case**: Block or rate-limit traffic from VPN services.
+</ParamField>
+
+```caddy
+defender block {
+    ranges vpn
+}
+```
+
 ## Combining Multiple Providers
 
 You can combine multiple cloud provider ranges in a single configuration:
@@ -212,7 +246,7 @@ You can combine multiple cloud provider ranges in a single configuration:
 ```caddy
 defender block {
     # Block all major cloud providers
-    ranges aws gcloud azure oci digitalocean linode vultr cloudflare aliyun
+    ranges aws gcloud azurepubliccloud oci digitalocean linode vultr cloudflare aliyun huawei
 }
 ```
 
