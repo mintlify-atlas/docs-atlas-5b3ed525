@@ -1,80 +1,485 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: 'Quickstart Guide'
+description: 'Get started with Caddy Defender in minutes and protect your website from AI scrapers and unwanted traffic'
 ---
 
-## Get started in three steps
+Get up and running with Caddy Defender in just a few minutes. This guide will walk you through installation, basic configuration, and deploying your first protection strategy.
 
-Get your documentation site running locally and make your first customization.
+## What is Caddy Defender?
 
-### Step 1: Set up your local environment
+Caddy Defender is a powerful middleware for Caddy that allows you to block or manipulate requests based on the client's IP address. It's particularly useful for:
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+- **Blocking AI scrapers** from services like OpenAI, DeepSeek, and GitHub Copilot
+- **Preventing unwanted traffic** from specific cloud providers or IP ranges
+- **Polluting AI training data** by returning garbage responses
+- **Rate limiting** suspicious traffic
+- **Protecting your content** while serving legitimate users
 
-### Step 2: Deploy your changes
+## Installation
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+<Steps>
+  <Step title="Pull the Docker Image">
+    The easiest way to use Caddy Defender is with the pre-built Docker image:
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+    ```bash
+    docker pull ghcr.io/jasonlovesdoggo/caddy-defender:latest
+    ```
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    <Info>
+      For other installation methods (building from source, using xcaddy, etc.), see the [Installation Guide](/installation).
+    </Info>
+  </Step>
 
-### Step 3: Go live
+  <Step title="Create Your Caddyfile">
+    Create a simple `Caddyfile` to block AI scrapers:
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    ```caddyfile
+    {
+        order defender before basicauth
+    }
 
-## Next steps
+    localhost:8080 {
+        # Block requests from popular AI services
+        defender block {
+            ranges openai deepseek githubcopilot
+        }
 
-Now that you have your docs running, explore these key features:
+        respond "Welcome to our website!"
+    }
+    ```
+
+    <Tip>
+      By default, if you don't specify any ranges, Caddy Defender will block AWS, Google Cloud, Azure, OpenAI, DeepSeek, and GitHub Copilot.
+    </Tip>
+  </Step>
+
+  <Step title="Run Caddy with Docker">
+    Start the Caddy server with your configuration:
+
+    ```bash
+    docker run -d \
+      --name caddy \
+      -v $(pwd)/Caddyfile:/etc/caddy/Caddyfile \
+      -p 8080:8080 \
+      ghcr.io/jasonlovesdoggo/caddy-defender:latest
+    ```
+
+    Replace `$(pwd)` with the full path to your Caddyfile directory if needed.
+  </Step>
+
+  <Step title="Verify It's Working">
+    Test your setup by accessing the server:
+
+    ```bash
+    curl http://localhost:8080
+    ```
+
+    You should see: `Welcome to our website!`
+
+    Requests from blocked IP ranges will receive a `403 Forbidden` response.
+  </Step>
+</Steps>
+
+## Basic Configuration
+
+The `defender` directive follows this syntax:
+
+```caddyfile
+defender <responder> {
+    ranges <ip_ranges...>
+    message <custom message>
+    url <redirect_url>
+    whitelist <ip_addresses...>
+}
+```
+
+### Available Responders
+
+| Responder   | Description                                                      | Required Fields |
+|-------------|------------------------------------------------------------------|-----------------|
+| `block`     | Returns `403 Forbidden` response                                 | None            |
+| `custom`    | Returns custom message with configurable status code             | `message`       |
+| `drop`      | Drops the connection without response                            | None            |
+| `garbage`   | Returns random garbage data to pollute AI training               | None            |
+| `redirect`  | Returns `308 Permanent Redirect`                                 | `url`           |
+| `ratelimit` | Marks requests for rate limiting (requires caddy-ratelimit)      | None            |
+| `tarpit`    | Streams data slowly to stall bots and waste resources            | None            |
+
+### Predefined IP Ranges
+
+Caddy Defender includes built-in IP ranges for popular services:
+
+<CodeGroup>
+```text AI Services
+openai
+deepseek
+githubcopilot
+mistral
+```
+
+```text Cloud Providers
+aws
+gcloud
+azurepubliccloud
+oci
+aliyun
+digitalocean
+linode
+vultr
+```
+
+```text Other
+cloudflare
+vpn
+private
+all
+```
+</CodeGroup>
+
+<Info>
+  For a complete list of available ranges and regional options (like `aws-us-east-1`), see the [Configuration Reference](/configuration/caddyfile).
+</Info>
+
+## Complete Example: Block AI Scrapers
+
+Here's a production-ready configuration that blocks AI scrapers while serving legitimate users:
+
+<CodeGroup>
+```caddyfile Caddyfile
+{
+    order defender before basicauth
+}
+
+example.com {
+    # Block AI training scrapers
+    defender block {
+        ranges openai deepseek githubcopilot aws gcloud azurepubliccloud
+    }
+
+    # Serve your website
+    root * /var/www/html
+    file_server
+}
+```
+
+```json JSON Config
+{
+  "apps": {
+    "http": {
+      "servers": {
+        "srv0": {
+          "listen": [":443"],
+          "routes": [
+            {
+              "match": [{"host": ["example.com"]}],
+              "handle": [
+                {
+                  "handler": "defender",
+                  "raw_responder": "block",
+                  "ranges": [
+                    "openai",
+                    "deepseek",
+                    "githubcopilot",
+                    "aws",
+                    "gcloud",
+                    "azurepubliccloud"
+                  ]
+                },
+                {
+                  "handler": "file_server",
+                  "root": "/var/www/html"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+</CodeGroup>
+
+## Advanced Example: Multi-Strategy Protection
+
+Combine multiple defense strategies for comprehensive protection:
+
+```caddyfile
+{
+    order defender before basicauth
+}
+
+example.com {
+    # Strategy 1: Block known bad actors completely
+    defender block {
+        ranges 203.0.113.0/24
+    }
+
+    # Strategy 2: Return garbage data to AI scrapers
+    defender garbage {
+        ranges openai deepseek
+    }
+
+    # Strategy 3: Slow down cloud scrapers with tarpit
+    defender tarpit {
+        ranges aws gcloud azurepubliccloud
+        tarpit_config {
+            timeout 30s
+            bytes_per_second 10
+            response_code 200
+        }
+    }
+
+    # Strategy 4: Redirect GitHub Copilot elsewhere
+    defender redirect {
+        ranges githubcopilot
+        url "https://github.com/sponsors"
+    }
+
+    # Your actual content for legitimate users
+    root * /var/www/html
+    file_server
+}
+```
+
+<Warning>
+  When using multiple defender directives, they are evaluated in order. The first matching range will handle the request.
+</Warning>
+
+## Real-World Production Example
+
+Here's a complete configuration for a production website:
+
+```caddyfile
+{
+    # Global options
+    email admin@example.com
+    order defender before basicauth
+}
+
+example.com {
+    # Enable automatic HTTPS
+    tls {
+        protocols tls1.2 tls1.3
+    }
+
+    # Block AI scrapers from major services
+    defender garbage {
+        ranges openai deepseek githubcopilot mistral
+        # But allow your own AWS EC2 instance
+        whitelist 3.141.59.26
+    }
+
+    # Block known VPN and proxy services
+    defender block {
+        ranges vpn
+    }
+
+    # Rate limit cloud providers instead of blocking
+    defender ratelimit {
+        ranges aws gcloud azurepubliccloud
+    }
+
+    # Serve robots.txt to discourage crawlers
+    handle /robots.txt {
+        respond "User-agent: *\nDisallow: /"
+    }
+
+    # Your application
+    reverse_proxy localhost:3000
+}
+```
+
+## Common Use Cases
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Block AI Training" icon="robot" href="/examples/block">
+    Prevent AI services from scraping your content for training data
+  </Card>
+  
+  <Card title="Protect API Endpoints" icon="shield" href="/examples/rate-limiting">
+    Rate limit or block automated API access from cloud providers
+  </Card>
+  
+  <Card title="Pollute Training Data" icon="trash" href="/examples/garbage">
+    Return garbage data to confuse AI scrapers and waste their resources
+  </Card>
+  
+  <Card title="Whitelist Trusted IPs" icon="check" href="/concepts/whitelisting">
+    Allow specific IPs through while blocking entire ranges
+  </Card>
 </CardGroup>
 
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+## Testing Your Configuration
+
+<Steps>
+  <Step title="Test from Allowed IP">
+    Access your site normally:
+
+    ```bash
+    curl http://localhost:8080
+    ```
+
+    Expected: Your normal website content
+  </Step>
+
+  <Step title="Test Blocked Range (Simulation)">
+    You can test blocking behavior by adding your IP to a custom range:
+
+    ```caddyfile
+    defender block {
+        ranges 127.0.0.1/32
+    }
+    ```
+
+    ```bash
+    curl http://localhost:8080
+    ```
+
+    Expected: `403 Forbidden` response
+  </Step>
+
+  <Step title="Check Logs">
+    Monitor Caddy logs to see which requests are being blocked:
+
+    ```bash
+    docker logs caddy
+    ```
+
+    Look for defender-related entries showing matched IP ranges.
+  </Step>
+
+  <Step title="Test Whitelisting">
+    Verify that whitelisted IPs can still access blocked ranges:
+
+    ```caddyfile
+    defender block {
+        ranges private
+        whitelist 127.0.0.1
+    }
+    ```
+
+    Your localhost should still have access.
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Defender Not Blocking Requests
+
+<AccordionGroup>
+  <Accordion title="Check directive order">
+    Ensure `defender` is ordered correctly in your global options:
+
+    ```caddyfile
+    {
+        order defender before basicauth
+    }
+    ```
+
+    The defender middleware must be processed before your content handlers.
+  </Accordion>
+
+  <Accordion title="Verify IP range syntax">
+    IP ranges must be valid CIDR notation or predefined keys:
+
+    ```caddyfile
+    # Correct
+    ranges 192.168.1.0/24 openai
+
+    # Incorrect
+    ranges 192.168.1.* openai-gpt4
+    ```
+
+    Use `plugin.go:26` to see all predefined range keys.
+  </Accordion>
+
+  <Accordion title="Check client IP detection">
+    If you're behind a reverse proxy or CDN, Caddy might see the proxy's IP instead of the client's. Configure your reverse proxy to forward the real IP:
+
+    ```caddyfile
+    {
+        servers {
+            trusted_proxies static 10.0.0.0/8
+        }
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Accidentally Blocking Legitimate Users
+
+<AccordionGroup>
+  <Accordion title="Use whitelist for exceptions">
+    If you need to block a range but allow specific IPs:
+
+    ```caddyfile
+    defender block {
+        ranges aws
+        whitelist 54.239.28.85 54.240.197.233
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Use custom responder instead of block">
+    Return a helpful message instead of blocking:
+
+    ```caddyfile
+    defender custom {
+        ranges openai
+        message "Please contact support for API access"
+        status_code 403
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Test before deploying">
+    Always test your configuration locally before deploying to production to avoid locking out legitimate traffic.
+  </Accordion>
+</AccordionGroup>
+
+### Performance Issues
+
+<AccordionGroup>
+  <Accordion title="IP matching is highly optimized">
+    Caddy Defender uses [bart](https://github.com/gaissmai/bart), a high-performance routing table implementation, so IP matching is extremely fast even with thousands of ranges.
+  </Accordion>
+
+  <Accordion title="Avoid excessive tarpit usage">
+    While tarpit is great for wasting bot resources, too many concurrent tarpit connections can consume server resources:
+
+    ```caddyfile
+    defender tarpit {
+        ranges scrapers
+        tarpit_config {
+            timeout 10s  # Shorter timeout
+            bytes_per_second 100  # Faster to reduce connections
+        }
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration Reference" icon="gear" href="/configuration/caddyfile">
+    Explore all configuration options and advanced features
+  </Card>
+  
+  <Card title="All Examples" icon="code" href="/examples/block">
+    See more examples including tarpit, rate limiting, and combinations
+  </Card>
+  
+  <Card title="Responder Types" icon="reply" href="/concepts/responders">
+    Learn about all available response strategies in detail
+  </Card>
+  
+  <Card title="IP Ranges" icon="globe" href="/api/ip-ranges/overview">
+    Complete list of predefined IP ranges and how to add custom ones
+  </Card>
+</CardGroup>
+
+<Info>
+  Need help? Check out the [GitHub repository](https://github.com/JasonLovesDoggo/caddy-defender) or open an issue.
+</Info>

@@ -1,0 +1,523 @@
+---
+title: 'JSON Configuration'
+description: 'Complete guide to configuring Caddy Defender using JSON configuration syntax'
+---
+
+## JSON Schema
+
+Caddy Defender can be configured using JSON in the Caddy JSON config file. The module ID is `http.handlers.defender`.
+
+```json
+{
+  "handler": "defender",
+  "raw_responder": "block",
+  "ranges": ["openai", "aws"],
+  "whitelist": ["203.0.113.5"],
+  "message": "Custom message",
+  "status_code": 403,
+  "url": "https://example.com/blocked",
+  "serve_ignore": false,
+  "tarpit_config": {
+    "headers": {
+      "Content-Type": "text/html"
+    },
+    "timeout": 30000000000,
+    "bytes_per_second": 24,
+    "code": 200
+  }
+}
+```
+
+## Configuration Fields
+
+### raw_responder
+
+<ParamField path="raw_responder" type="string" required>
+  Defines the response strategy for blocked requests.
+  
+  **Valid values:** `"block"`, `"custom"`, `"drop"`, `"garbage"`, `"ratelimit"`, `"redirect"`, `"tarpit"`
+</ParamField>
+
+<Tabs>
+  <Tab title="block">
+    Returns a `403 Forbidden` response with "Access denied" message.
+    
+    ```json
+    {
+      "handler": "defender",
+      "raw_responder": "block",
+      "ranges": ["openai", "aws"]
+    }
+    ```
+  </Tab>
+  
+  <Tab title="custom">
+    Returns a custom message with configurable status code. Requires `message` field.
+    
+    ```json
+    {
+      "handler": "defender",
+      "raw_responder": "custom",
+      "message": "Please contact support for API access",
+      "status_code": 403,
+      "ranges": ["openai"]
+    }
+    ```
+  </Tab>
+  
+  <Tab title="drop">
+    Drops the connection immediately by aborting the handler.
+    
+    ```json
+    {
+      "handler": "defender",
+      "raw_responder": "drop",
+      "ranges": ["vpn", "tor"]
+    }
+    ```
+  </Tab>
+  
+  <Tab title="garbage">
+    Returns random garbage data to pollute AI training datasets.
+    
+    ```json
+    {
+      "handler": "defender",
+      "raw_responder": "garbage",
+      "ranges": ["openai", "deepseek"]
+    }
+    ```
+  </Tab>
+  
+  <Tab title="ratelimit">
+    Marks requests for rate limiting. Requires [caddy-ratelimit](https://github.com/mholt/caddy-ratelimit) module.
+    
+    ```json
+    {
+      "handler": "defender",
+      "raw_responder": "ratelimit",
+      "ranges": ["aws", "gcloud"]
+    }
+    ```
+  </Tab>
+  
+  <Tab title="redirect">
+    Returns a `308 Permanent Redirect` response. Requires `url` field.
+    
+    ```json
+    {
+      "handler": "defender",
+      "raw_responder": "redirect",
+      "url": "https://example.com/blocked",
+      "ranges": ["openai"]
+    }
+    ```
+  </Tab>
+  
+  <Tab title="tarpit">
+    Streams data at a slow, configurable rate to stall bots. Requires `tarpit_config`.
+    
+    ```json
+    {
+      "handler": "defender",
+      "raw_responder": "tarpit",
+      "ranges": ["openai", "aws"],
+      "tarpit_config": {
+        "timeout": 120000000000,
+        "bytes_per_second": 30,
+        "code": 200
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### ranges
+
+<ParamField path="ranges" type="string[]">
+  Specifies IP ranges to block using CIDR notation or predefined service keys.
+  
+  **Default:** `["aws", "gcloud", "azurepubliccloud", "openai", "deepseek", "githubcopilot"]`
+</ParamField>
+
+```json
+{
+  "ranges": [
+    "openai",
+    "aws",
+    "192.168.1.0/24",
+    "10.0.0.0/8"
+  ]
+}
+```
+
+<Note>
+  See [IP Ranges documentation](/api/ip-ranges/overview) for all predefined service keys.
+</Note>
+
+### whitelist
+
+<ParamField path="whitelist" type="string[]">
+  IP addresses to exclude from blocking. Only supports individual IPs, not ranges.
+  
+  **Default:** `[]`
+</ParamField>
+
+```json
+{
+  "whitelist": [
+    "203.0.113.5",
+    "198.51.100.42"
+  ]
+}
+```
+
+### message
+
+<ParamField path="message" type="string">
+  Custom response message for the `custom` responder type.
+  
+  **Required when:** `raw_responder` is `"custom"`
+</ParamField>
+
+```json
+{
+  "raw_responder": "custom",
+  "message": "You don't have permission to access this page"
+}
+```
+
+### status_code
+
+<ParamField path="status_code" type="integer">
+  HTTP status code for the `custom` responder type.
+  
+  **Default:** `200`
+  
+  **Valid values:** Any HTTP status code (200, 403, 404, 451, 503, etc.)
+</ParamField>
+
+```json
+{
+  "raw_responder": "custom",
+  "message": "Page not found",
+  "status_code": 404
+}
+```
+
+### url
+
+<ParamField path="url" type="string">
+  Redirect URL for the `redirect` responder type.
+  
+  **Required when:** `raw_responder` is `"redirect"`
+</ParamField>
+
+```json
+{
+  "raw_responder": "redirect",
+  "url": "https://example.com/blocked"
+}
+```
+
+### serve_ignore
+
+<ParamField path="serve_ignore" type="boolean">
+  Serves a robots.txt file with `Disallow: /` directive to discourage crawlers.
+  
+  **Default:** `false`
+</ParamField>
+
+```json
+{
+  "serve_ignore": true
+}
+```
+
+### tarpit_config
+
+<ParamField path="tarpit_config" type="object">
+  Configuration for the `tarpit` responder. Controls how data is streamed to slow down bots.
+  
+  **Required when:** `raw_responder` is `"tarpit"`
+</ParamField>
+
+#### tarpit_config.headers
+
+<ParamField path="tarpit_config.headers" type="object">
+  Custom HTTP headers to include in the tarpit response as key-value pairs.
+  
+  **Default:** `{}`
+</ParamField>
+
+```json
+{
+  "tarpit_config": {
+    "headers": {
+      "Content-Type": "text/html",
+      "X-Custom-Header": "custom-value"
+    }
+  }
+}
+```
+
+#### tarpit_config.timeout
+
+<ParamField path="tarpit_config.timeout" type="integer">
+  Maximum duration (in nanoseconds) before forcefully closing the connection.
+  
+  **Default:** `30000000000` (30 seconds)
+  
+  **Format:** Duration in nanoseconds as int64
+  
+  **Validation:** Must be greater than 0
+</ParamField>
+
+```json
+{
+  "tarpit_config": {
+    "timeout": 120000000000
+  }
+}
+```
+
+<Note>
+  Common durations:
+  - 30 seconds: `30000000000`
+  - 1 minute: `60000000000`
+  - 2 minutes: `120000000000`
+  - 5 minutes: `300000000000`
+</Note>
+
+#### tarpit_config.bytes_per_second
+
+<ParamField path="tarpit_config.bytes_per_second" type="integer">
+  Number of bytes to stream per second. Lower values slow down bots more effectively.
+  
+  **Default:** `24`
+  
+  **Validation:** Must be greater than 10
+</ParamField>
+
+```json
+{
+  "tarpit_config": {
+    "bytes_per_second": 50
+  }
+}
+```
+
+#### tarpit_config.code
+
+<ParamField path="tarpit_config.code" type="integer">
+  HTTP response code for the tarpit response.
+  
+  **Default:** `200`
+</ParamField>
+
+```json
+{
+  "tarpit_config": {
+    "code": 200
+  }
+}
+```
+
+## Complete Examples
+
+### Block OpenAI and AWS
+
+```json
+{
+  "handler": "defender",
+  "raw_responder": "block",
+  "ranges": ["openai", "aws"]
+}
+```
+
+### Custom 403 Response
+
+```json
+{
+  "handler": "defender",
+  "raw_responder": "custom",
+  "message": "You don't have permission to access this page",
+  "status_code": 403,
+  "ranges": ["openai", "aws", "deepseek"]
+}
+```
+
+### Redirect to Blocked Page
+
+```json
+{
+  "handler": "defender",
+  "raw_responder": "redirect",
+  "url": "https://example.com/blocked",
+  "ranges": ["vpn", "tor"]
+}
+```
+
+### Tarpit with Custom Configuration
+
+```json
+{
+  "handler": "defender",
+  "raw_responder": "tarpit",
+  "ranges": ["openai", "aws", "gcloud"],
+  "tarpit_config": {
+    "headers": {
+      "Content-Type": "text/html",
+      "X-Robots-Tag": "noindex, nofollow"
+    },
+    "timeout": 120000000000,
+    "bytes_per_second": 30,
+    "code": 200
+  }
+}
+```
+
+### Whitelist Specific IPs
+
+```json
+{
+  "handler": "defender",
+  "raw_responder": "block",
+  "ranges": ["openai", "aws"],
+  "whitelist": [
+    "203.0.113.5",
+    "198.51.100.42"
+  ]
+}
+```
+
+### Serve robots.txt Disallow
+
+```json
+{
+  "handler": "defender",
+  "raw_responder": "block",
+  "ranges": ["openai", "aws", "gcloud"],
+  "serve_ignore": true
+}
+```
+
+### Multiple Status Codes with Custom
+
+<CodeGroup>
+```json 200 OK
+{
+  "handler": "defender",
+  "raw_responder": "custom",
+  "message": "Please contact support for API access",
+  "status_code": 200,
+  "ranges": ["openai"]
+}
+```
+
+```json 403 Forbidden
+{
+  "handler": "defender",
+  "raw_responder": "custom",
+  "message": "Access denied",
+  "status_code": 403,
+  "ranges": ["aws", "gcloud"]
+}
+```
+
+```json 404 Not Found
+{
+  "handler": "defender",
+  "raw_responder": "custom",
+  "message": "Page not found",
+  "status_code": 404,
+  "ranges": ["vpn", "tor"]
+}
+```
+
+```json 451 Legal
+{
+  "handler": "defender",
+  "raw_responder": "custom",
+  "message": "This content is not available in your region due to legal restrictions",
+  "status_code": 451,
+  "ranges": ["192.168.1.0/24"]
+}
+```
+
+```json 503 Maintenance
+{
+  "handler": "defender",
+  "raw_responder": "custom",
+  "message": "Service temporarily unavailable for maintenance",
+  "status_code": 503,
+  "ranges": ["all"]
+}
+```
+</CodeGroup>
+
+## Full Caddy JSON Config Example
+
+```json
+{
+  "apps": {
+    "http": {
+      "servers": {
+        "srv0": {
+          "listen": [":443"],
+          "routes": [
+            {
+              "match": [
+                {
+                  "host": ["example.com"]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "defender",
+                  "raw_responder": "tarpit",
+                  "ranges": ["openai", "aws", "gcloud"],
+                  "whitelist": ["203.0.113.5"],
+                  "tarpit_config": {
+                    "headers": {
+                      "Content-Type": "text/html"
+                    },
+                    "timeout": 120000000000,
+                    "bytes_per_second": 30,
+                    "code": 200
+                  }
+                },
+                {
+                  "handler": "static_response",
+                  "body": "Hello World"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+## Validation Rules
+
+<Warning>
+  The following validation rules are enforced:
+  
+  - `raw_responder` must be one of: `block`, `custom`, `drop`, `garbage`, `ratelimit`, `redirect`, `tarpit`
+  - When using `custom`: `message` field is required
+  - When using `redirect`: `url` field is required
+  - `ranges` must contain valid CIDR notation or predefined keys
+  - `whitelist` only accepts IP addresses (not ranges)
+  - `tarpit_config.timeout` must be greater than 0
+  - `tarpit_config.bytes_per_second` must be greater than 10
+</Warning>
+
+## Source Code Reference
+
+The JSON configuration is handled by:
+- `config.go:162-220` (UnmarshalJSON function)
+- `config.go:223-254` (Validate function)
+- `plugin.go:74-113` (Defender struct definition)

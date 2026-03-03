@@ -1,0 +1,268 @@
+---
+title: Cloud Provider IP Ranges
+description: IP ranges for AWS, Google Cloud, Azure, Oracle Cloud, and other major cloud providers
+---
+
+## Supported Cloud Providers
+
+Caddy Defender includes comprehensive IP range coverage for all major cloud providers. These ranges are fetched from official sources and updated at build time.
+
+## Amazon Web Services (AWS)
+
+### Global AWS Ranges
+
+<ParamField path="aws" type="string">
+  All AWS IP ranges across all regions and services.
+  
+  **Source**: [AWS IP Ranges JSON](https://ip-ranges.amazonaws.com/ip-ranges.json)
+  
+  **Fetcher**: `aws.AWSFetcher` in `ranges/fetchers/aws/aws.go:14-17`
+</ParamField>
+
+```caddy
+defender block {
+    ranges aws
+}
+```
+
+### Regional AWS Ranges
+
+You can also target specific AWS regions:
+
+<AccordionGroup>
+  <Accordion title="US East 1 (N. Virginia)">
+    <ParamField path="aws-us-east-1" type="string">
+      AWS IP ranges for the us-east-1 region only.
+      
+      **Fetcher**: `aws.RegionFetcher{Region: "us-east-1"}` in `ranges/fetchers/aws/aws_region.go:18-21`
+    </ParamField>
+    
+    ```caddy
+    defender block {
+        ranges aws-us-east-1
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="US West 1 (N. California)">
+    <ParamField path="aws-us-west-1" type="string">
+      AWS IP ranges for the us-west-1 region only.
+      
+      **Fetcher**: `aws.RegionFetcher{Region: "us-west-1"}` in `ranges/fetchers/aws/aws_region.go:18-21`
+    </ParamField>
+    
+    ```caddy
+    defender block {
+        ranges aws-us-west-1
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+  Regional fetchers use the same source data as global AWS ranges but filter by region. You can add more regions by modifying `ranges/main.go:45-47`.
+</Note>
+
+## Google Cloud Platform (GCP)
+
+<ParamField path="gcloud" type="string">
+  All Google Cloud Platform IP ranges across all regions and services.
+  
+  **Source**: [GCP IP Ranges JSON](https://www.gstatic.com/ipranges/cloud.json)
+  
+  **Fetcher**: `fetchers.GCloudFetcher` in `ranges/fetchers/gcloud.go:39-69`
+  
+  **Includes**: Both IPv4 and IPv6 prefixes
+</ParamField>
+
+```caddy
+defender block {
+    ranges gcloud
+}
+```
+
+## Microsoft Azure
+
+<ParamField path="azure" type="string">
+  Azure Public Cloud IP ranges for Azure services.
+  
+  **Source**: [Azure Download Center](https://www.microsoft.com/en-us/download/details.aspx?id=56519)
+  
+  **Fetcher**: `fetchers.AzurePublicCloudFetcher` in `ranges/fetchers/azure.go:23-84`
+  
+  **Note**: The fetcher automatically discovers the latest JSON download URL by scraping the download page, then filters for ActionGroup platform IPs.
+</ParamField>
+
+```caddy
+defender block {
+    ranges azure
+}
+```
+
+## Oracle Cloud Infrastructure (OCI)
+
+<ParamField path="oci" type="string">
+  Oracle Cloud Infrastructure IP ranges across all regions.
+  
+  **Source**: [Oracle Public IP Ranges JSON](https://docs.oracle.com/iaas/tools/public_ip_ranges.json)
+  
+  **Fetcher**: `fetchers.OracleFetcher` in `ranges/fetchers/oracle.go:21-52`
+</ParamField>
+
+```caddy
+defender block {
+    ranges oci
+}
+```
+
+## Cloudflare
+
+<ParamField path="cloudflare" type="string">
+  Cloudflare's edge network IP ranges (both IPv4 and IPv6).
+  
+  **Source**: [Cloudflare API](https://api.cloudflare.com/client/v4/ips)
+  
+  **Fetcher**: `fetchers.CloudflareFetcher` in `ranges/fetchers/cloudflare.go:20-51`
+  
+  **Use Case**: Useful for blocking Cloudflare proxied requests or ensuring requests come through Cloudflare.
+</ParamField>
+
+```caddy
+defender block {
+    ranges cloudflare
+}
+```
+
+## Alibaba Cloud (Aliyun)
+
+<ParamField path="aliyun" type="string">
+  Alibaba Cloud (Aliyun) IP ranges.
+  
+  **Source**: [GitHub IP Prefix List](https://cdn.jsdelivr.net/gh/sakib-m/IP-Prefix-List@main/ALIBABA/only_ip_blocks.txt)
+  
+  **Fetcher**: `fetchers.AliyunFetcher` in `ranges/fetchers/aliyun.go:24-79`
+  
+  **Sample Ranges**: The generated data includes extensive ranges like `8.208.0.0/16`, `47.52.0.0/16`, etc. (See `ranges/data/generated.go:6-1820`)
+</ParamField>
+
+```caddy
+defender block {
+    ranges aliyun
+}
+```
+
+## DigitalOcean
+
+<ParamField path="digitalocean" type="string">
+  DigitalOcean datacenter IP ranges.
+  
+  **Source**: [DigitalOcean CSV](https://digitalocean.com/geo/google.csv)
+  
+  **Fetcher**: `fetchers.DigitalOceanFetcher` in `ranges/fetchers/digitalocean.go:21-55`
+  
+  **Format**: Parses CSV format with IP ranges in the first column.
+</ParamField>
+
+```caddy
+defender block {
+    ranges digitalocean
+}
+```
+
+## Linode
+
+<ParamField path="linode" type="string">
+  Linode datacenter IP ranges.
+  
+  **Source**: [Linode GeoIP](https://geoip.linode.com/)
+  
+  **Fetcher**: `fetchers.LinodeFetcher` in `ranges/fetchers/linode.go:24-79`
+  
+  **Note**: The fetcher filters out comment lines (starting with `#`) before parsing the CSV data.
+</ParamField>
+
+```caddy
+defender block {
+    ranges linode
+}
+```
+
+## Vultr
+
+<ParamField path="vultr" type="string">
+  Vultr Cloud IP ranges.
+  
+  **Source**: [Vultr Geofeed JSON](https://geofeed.constant.com/?json)
+  
+  **Fetcher**: `fetchers.VultrFetcher` in `ranges/fetchers/vultr.go:20-59`
+  
+  **Data Structure**: Parses JSON with subnet information including geolocation data.
+</ParamField>
+
+```caddy
+defender block {
+    ranges vultr
+}
+```
+
+## Combining Multiple Providers
+
+You can combine multiple cloud provider ranges in a single configuration:
+
+```caddy
+defender block {
+    # Block all major cloud providers
+    ranges aws gcloud azure oci digitalocean linode vultr cloudflare aliyun
+}
+```
+
+## Common Use Cases
+
+<AccordionGroup>
+  <Accordion title="Block Cloud Hosting">
+    Prevent requests from cloud hosting providers (often used by scrapers and bots):
+    
+    ```caddy
+    defender block {
+        ranges aws gcloud azure digitalocean linode vultr
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Allow Only Cloudflare">
+    Ensure requests come through Cloudflare's CDN:
+    
+    ```caddy
+    defender block {
+        ranges all
+        whitelist cloudflare
+    }
+    ```
+    
+    <Note>
+      This example blocks all IPs but whitelists Cloudflare ranges.
+    </Note>
+  </Accordion>
+
+  <Accordion title="Regional Restrictions">
+    Block specific AWS regions while allowing others:
+    
+    ```caddy
+    defender block {
+        ranges aws-us-east-1 aws-us-west-1
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Data Freshness
+
+All cloud provider ranges are fetched from official sources during the build process. To ensure up-to-date ranges:
+
+1. Rebuild the IP ranges data regularly
+2. Integrate range updates into your CI/CD pipeline
+3. Monitor cloud provider announcements for IP range changes
+
+<Note>
+  Most cloud providers announce IP range changes in advance. AWS, for example, provides an SNS topic for IP range updates.
+</Note>

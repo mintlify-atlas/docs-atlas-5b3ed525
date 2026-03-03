@@ -1,0 +1,139 @@
+---
+title: "Introduction to Caddy Defender"
+description: "A powerful Caddy middleware for IP-based traffic control, AI scraper blocking, and intelligent request manipulation"
+---
+
+# Introduction to Caddy Defender
+
+Caddy Defender is a middleware plugin for Caddy that allows you to block or manipulate requests based on the client's IP address. It's particularly useful for preventing unwanted traffic from AI scrapers, bots, and specific IP ranges while maintaining legitimate user access.
+
+<CardGroup cols={2}>
+  <Card title="IP Range Filtering" icon="filter">
+    Block or manipulate requests from specific IP ranges using CIDR notation or predefined service keys
+  </Card>
+  <Card title="AI Service Blocking" icon="robot">
+    Pre-configured IP ranges for popular AI services like OpenAI, DeepSeek, GitHub Copilot, and more
+  </Card>
+  <Card title="Multiple Response Strategies" icon="shield">
+    Choose from block, custom messages, drop connections, garbage data, redirects, rate limiting, or tarpit
+  </Card>
+  <Card title="Custom IP Ranges" icon="network-wired">
+    Add your own IP ranges via Caddyfile configuration alongside predefined ranges
+  </Card>
+</CardGroup>
+
+## Key Features
+
+### Embedded IP Ranges
+
+Caddy Defender includes predefined IP ranges for popular AI services and cloud providers. These ranges are embedded in the binary and can be used without additional configuration:
+
+- **AI Services**: OpenAI, DeepSeek, GitHub Copilot, Mistral
+- **Cloud Providers**: AWS (including regional filters), Google Cloud, Azure, Oracle Cloud, Alibaba Cloud
+- **CDNs & Hosting**: Cloudflare, DigitalOcean, Vultr, Linode
+- **Special Ranges**: VPNs, Tor exit nodes, private networks, all IPs
+
+<Note>
+The default ranges (if none specified) are: `aws`, `gcloud`, `azurepubliccloud`, `openai`, `deepseek`, and `githubcopilot`.
+</Note>
+
+### Response Strategies
+
+Caddy Defender supports multiple responder backends to handle blocked requests:
+
+| Responder | Description |
+|-----------|-------------|
+| **block** | Return a `403 Forbidden` response |
+| **custom** | Return a custom message with configurable status code |
+| **drop** | Drop the connection immediately |
+| **garbage** | Return random garbage data to pollute AI training |
+| **redirect** | Return a `308 Permanent Redirect` to a custom URL |
+| **ratelimit** | Mark requests for rate limiting (requires caddy-ratelimit) |
+| **tarpit** | Stream data slowly to stall bots and waste resources |
+
+### Whitelisting Support
+
+You can whitelist specific IP addresses to bypass blocking rules, even if they're within a blocked range. This is useful for allowing your own infrastructure while blocking the rest of a cloud provider's IPs.
+
+## Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Prevent AI Training Data Theft" icon="brain">
+    Block AI scrapers from crawling your content or return garbage data to pollute their training datasets
+  </Card>
+  <Card title="Reduce Cloud Costs" icon="dollar-sign">
+    Block unnecessary traffic from cloud providers and reduce bandwidth costs
+  </Card>
+  <Card title="Protect Private Content" icon="lock">
+    Restrict access to specific IP ranges for internal or region-specific content
+  </Card>
+  <Card title="Slow Down Bots" icon="hourglass">
+    Use tarpit to waste bot resources by streaming data at extremely slow rates
+  </Card>
+</CardGroup>
+
+## Quick Navigation
+
+<CardGroup cols={3}>
+  <Card title="Installation" icon="download" href="/installation">
+    Get started with Docker, xcaddy, or binary downloads
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Set up your first Caddy Defender configuration in minutes
+  </Card>
+  <Card title="Examples" icon="code" href="/examples/block">
+    Browse real-world configuration examples and use cases
+  </Card>
+</CardGroup>
+
+## How It Works
+
+Caddy Defender operates as an HTTP middleware handler that:
+
+1. Extracts the client's IP address from incoming requests
+2. Checks if the IP matches any configured ranges (CIDR or predefined keys)
+3. Applies whitelist rules to allow specific IPs to bypass blocking
+4. Executes the configured responder strategy for matched IPs
+5. Allows the request to proceed normally if no rules match
+
+<Info>
+Caddy Defender uses [bart](https://github.com/gaissmai/bart), a highly efficient routing table implementation based on Balanced ART, enabling high-performance IP matching even with large IP range lists.
+</Info>
+
+## Configuration Overview
+
+The `defender` directive uses this basic syntax:
+
+```caddyfile
+defender <responder> {
+    ranges <ip_ranges...>
+    message <custom message>  # For 'custom' responder
+    url <url>                 # For 'redirect' responder
+    whitelist <ips...>        # Optional IP whitelist
+}
+```
+
+For detailed configuration options, see the [Configuration](/configuration/caddyfile) page.
+
+## Performance
+
+Caddy Defender is designed for high performance:
+
+- IP range matching uses an optimized Balanced ART data structure
+- Predefined IP ranges are embedded at build time
+- Minimal overhead on requests that don't match any rules
+- Efficient memory usage even with thousands of IP ranges
+
+## Next Steps
+
+<Steps>
+  <Step title="Install Caddy Defender">
+    Follow the [Installation](/installation) guide to add Caddy Defender to your Caddy server
+  </Step>
+  <Step title="Try the Quickstart">
+    Complete the [Quickstart](/quickstart) to block AI scrapers in under 5 minutes
+  </Step>
+  <Step title="Explore Advanced Features">
+    Check out [Examples](/examples/block) and [Advanced Build](/guides/advanced-build) for more complex use cases
+  </Step>
+</Steps>

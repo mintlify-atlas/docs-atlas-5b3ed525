@@ -1,0 +1,234 @@
+---
+title: 'Drop Responder'
+description: 'Silently drops the connection without sending a response'
+---
+
+The Drop responder immediately terminates the TCP connection without sending any HTTP response, leaving clients hanging.
+
+## Overview
+
+Unlike other responders that send HTTP responses, the Drop responder abruptly closes the connection by triggering a panic with `http.ErrAbortHandler`. This is the most aggressive response strategy and provides zero feedback to the client.
+
+## Configuration
+
+The Drop responder requires no additional parameters beyond the standard IP ranges configuration.
+
+<ParamField path="ranges" type="string[]">
+  IP ranges to drop connections from. Can be CIDR notations (e.g., `192.168.1.0/24`) or predefined service keys (e.g., `openai`, `aws`).
+  
+  **Default:** `["aws", "azurepubliccloud", "deepseek", "gcloud", "githubcopilot", "openai"]`
+</ParamField>
+
+<ParamField path="whitelist" type="string[]">
+  Optional list of specific IP addresses to exclude from being dropped.
+  
+  **Default:** `[]`
+</ParamField>
+
+## Behavior
+
+When a client from a blocked range makes a request:
+
+1. Connection is immediately aborted
+2. No HTTP status code is sent
+3. No response body is transmitted
+4. Client receives a connection reset or timeout
+
+<ResponseField name="TCP Connection" type="state">
+  **Terminated** - No HTTP response sent
+</ResponseField>
+
+## Examples
+
+<CodeGroup>
+
+```caddyfile Caddyfile - Basic
+localhost:8080 {
+    defender drop {
+        ranges openai aws deepseek
+    }
+    respond "Content for humans"
+}
+```
+
+```caddyfile Caddyfile - Aggressive Blocking
+example.com {
+    defender drop {
+        ranges 203.0.113.0/24 vpn tor
+    }
+    reverse_proxy localhost:3000
+}
+```
+
+```caddyfile Caddyfile - Full Configuration
+{
+    auto_https off
+    order defender after header
+}
+
+:80 {
+    bind 127.0.0.1 ::1
+    
+    defender drop {
+        ranges private
+    }
+    
+    respond "This is what humans see"
+}
+```
+
+```json JSON Configuration
+{
+  "handler": "defender",
+  "raw_responder": "drop",
+  "ranges": ["openai", "aws", "203.0.113.0/24"]
+}
+```
+
+</CodeGroup>
+
+## Implementation Details
+
+The Drop responder is implemented in `responders/drop.go:12`:
+
+```go
+func (d *DropResponder) ServeHTTP(w http.ResponseWriter, _ *http.Request, _ caddyhttp.Handler) error {
+    panic(http.ErrAbortHandler)
+}
+```
+
+This uses Go's standard `http.ErrAbortHandler` mechanism to immediately abort the connection without sending a response.
+
+## Client Experience
+
+What clients see when their connection is dropped:
+
+<Tabs>
+  <Tab title="curl">
+    ```bash
+    $ curl http://example.com
+    curl: (52) Empty reply from server
+    ```
+    or
+    ```bash
+    $ curl http://example.com
+    curl: (56) Recv failure: Connection reset by peer
+    ```
+  </Tab>
+  
+  <Tab title="Browser">
+    Browsers typically show:
+    - "The connection was reset"
+    - "ERR_CONNECTION_RESET"
+    - "The site can't be reached"
+  </Tab>
+  
+  <Tab title="HTTP Client">
+    Most HTTP libraries will throw:
+    - Connection reset error
+    - Socket closed exception
+    - Timeout (if client waits)
+  </Tab>
+</Tabs>
+
+## Use Cases
+
+### Maximum Deterrence
+Provide zero information to attackers or scrapers:
+
+```caddyfile
+defender drop {
+    ranges known-bad-actors scanners
+}
+```
+
+### Bandwidth Conservation
+Save bandwidth by not sending any response data:
+
+```caddyfile
+defender drop {
+    ranges openai aws gcloud
+}
+```
+
+### Waste Scraper Resources
+Force scrapers to wait for timeout instead of getting immediate feedback:
+
+```caddyfile
+defender drop {
+    ranges scrapers bots
+}
+```
+
+### Silent Blocking
+Block without revealing that blocking is happening:
+
+```caddyfile
+defender drop {
+    ranges vpn tor
+}
+```
+
+## Advantages
+
+1. **Zero information disclosure** - Client gets no feedback about why connection failed
+2. **Minimal server resources** - No response processing or data transmission
+3. **Maximum deterrence** - Frustrating for automated scrapers
+4. **Bandwidth savings** - No response data sent
+
+## Disadvantages
+
+1. **Poor user experience** - Legitimate users see confusing errors
+2. **Hard to debug** - Difficult to distinguish from network issues
+3. **No logging context** - Client doesn't know they were blocked
+4. **May trigger retries** - Some clients automatically retry on connection failures
+
+## Comparison with Other Responders
+
+- **vs Block**: Drop sends nothing, Block sends 403 Forbidden
+- **vs Custom**: Drop terminates connection, Custom sends a response
+- **vs Tarpit**: Drop is immediate, Tarpit deliberately slows responses
+- **vs Redirect**: Drop closes connection, Redirect sends clients elsewhere
+
+## When to Use Drop
+
+**Use Drop when:**
+- You want maximum deterrence against scrapers
+- Bandwidth conservation is important
+- You don't care about providing feedback
+- Debugging by blocked clients is not a concern
+
+**Don't use Drop when:**
+- Legitimate users might be affected
+- You need to log why clients were blocked
+- Clear error messages are important
+- You're troubleshooting configuration
+
+## Best Practices
+
+1. **Be certain about ranges** - Drop provides no feedback, so misconfiguration is hard to debug
+2. **Use whitelist liberally** - Protect known good IPs from being dropped
+3. **Monitor logs** - Check server logs to see what's being dropped
+4. **Test thoroughly** - Verify you're not dropping legitimate traffic
+5. **Consider alternatives** - Block or Custom might be better for most use cases
+
+## Testing
+
+Test the Drop responder configuration:
+
+```bash
+# From a blocked IP, you should see connection reset
+curl -v http://example.com
+
+# From a non-blocked IP, normal response
+curl -v http://example.com
+
+# Simulate blocked IP using X-Forwarded-For (if configured)
+curl -H "X-Forwarded-For: 20.202.43.67" http://example.com
+```
+
+## Related Documentation
+
+- [Block Responder](/api/responders/block) - Send 403 Forbidden instead
+- [Custom Responder](/api/responders/custom) - Send custom responses
+- [Tarpit Responder](/api/responders/tarpit) - Slow down responses instead of dropping

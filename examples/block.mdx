@@ -1,0 +1,104 @@
+---
+title: 'Block Requests'
+description: 'Block requests from specific IP ranges with 403 Forbidden responses'
+---
+
+## Overview
+
+The `block` responder immediately blocks requests with a **403 Forbidden** status code. This is the most straightforward way to deny access to specific IP ranges.
+
+<Info>
+  The `block` responder requires no additional configuration beyond specifying the IP ranges.
+</Info>
+
+## When to Use
+
+Use the `block` responder when:
+- You want to explicitly deny access to certain IP ranges
+- A clear 403 Forbidden response is acceptable
+- You don't need custom messages or status codes
+- You want a simple, no-configuration solution
+
+## Configuration Examples
+
+<Tabs>
+  <Tab title="Caddyfile">
+    ### Example 1: Block Specific IP Ranges
+
+    ```caddyfile
+    localhost:8080 {
+        defender block {
+            ranges 203.0.113.0/24 openai 198.51.100.0/24
+        }
+        respond "Human-friendly content"
+    }
+    ```
+
+    This example blocks requests from:
+    - The `203.0.113.0/24` CIDR range
+    - All OpenAI IP addresses (using the built-in `openai` range)
+    - The `198.51.100.0/24` CIDR range
+
+    ### Example 2: Block Private Networks
+
+    ```caddyfile
+    {
+        auto_https off
+        order defender after header
+        debug
+    }
+
+    :80 {
+        bind 127.0.0.1 ::1
+
+        defender block {
+            ranges private
+        }
+        respond "This is what a human sees"
+    }
+
+    :83 {
+        bind 127.0.0.1 ::1
+        respond "Clear text HTTP"
+    }
+    ```
+
+    This configuration:
+    - Blocks all private IP ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
+    - Only serves content to public IP addresses
+    - Useful for preventing internal network access
+  </Tab>
+
+  <Tab title="JSON">
+    ### Example 1: Block Specific IP Ranges
+
+    ```json
+    {
+        "handler": "defender",
+        "raw_responder": "block",
+        "ranges": ["203.0.113.0/24", "openai", "198.51.100.0/24"]
+    }
+    ```
+
+    ### Example 2: Block Private Networks
+
+    ```json
+    {
+        "handler": "defender",
+        "raw_responder": "block",
+        "ranges": ["private"]
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Response Behavior
+
+When a request is blocked:
+- HTTP status code: **403 Forbidden**
+- Response body: Default Caddy 403 error page
+- Connection: Closed after response is sent
+
+<Note>
+  For custom error messages or status codes, use the [custom responder](/examples/custom-response) instead.
+</Note>

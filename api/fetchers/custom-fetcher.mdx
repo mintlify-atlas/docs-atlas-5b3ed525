@@ -1,0 +1,491 @@
+---
+title: "Custom Fetcher"
+description: "Step-by-step guide to creating a custom IP range fetcher for Caddy Defender"
+---
+
+## Overview
+
+Creating a custom fetcher allows you to integrate IP ranges from any source into Caddy Defender. This guide walks through implementing the `IPRangeFetcher` interface and integrating your fetcher into the build system.
+
+## Creating a Custom Fetcher
+
+<Steps>
+  <Step title="Create the fetcher file">
+    Create a new `.go` file in the `ranges/fetchers/` directory. The filename should match your service name (e.g., `myservice.go`).
+
+    ```bash
+    cd ranges/fetchers/
+    touch myservice.go
+    ```
+  </Step>
+
+  <Step title="Implement the IPRangeFetcher interface">
+    Your fetcher must implement all three methods of the `IPRangeFetcher` interface defined in `ranges/fetchers/fetcher.go:4`:
+
+    <CodeGroup>
+    ```go Simple Example (Hardcoded Ranges)
+    package fetchers
+
+    // MyServiceFetcher implements the IPRangeFetcher interface for My Service.
+    type MyServiceFetcher struct{}
+
+    func (f MyServiceFetcher) Name() string {
+        return "MyService"
+    }
+
+    func (f MyServiceFetcher) Description() string {
+        return "Fetches IP ranges for My Service."
+    }
+
+    func (f MyServiceFetcher) FetchIPRanges() ([]string, error) {
+        return []string{
+            "203.0.113.0/24",
+            "2001:db8::/32",
+        }, nil
+    }
+    ```
+
+    ```go HTTP API Example
+    package fetchers
+
+    import (
+        "encoding/json"
+        "fmt"
+        "net/http"
+    )
+
+    type MyServiceFetcher struct{}
+
+    func (f MyServiceFetcher) Name() string {
+        return "MyService"
+    }
+
+    func (f MyServiceFetcher) Description() string {
+        return "Fetches IP ranges from My Service API."
+    }
+
+    func (f MyServiceFetcher) FetchIPRanges() ([]string, error) {
+        const url = "https://api.myservice.com/ip-ranges"
+        
+        resp, err := http.Get(url)
+        if err != nil {
+            return nil, fmt.Errorf("failed to fetch IP ranges: %v", err)
+        }
+        defer resp.Body.Close()
+        
+        if resp.StatusCode != http.StatusOK {
+            return nil, fmt.Errorf("received status code %d", resp.StatusCode)
+        }
+        
+        var result struct {
+            Ranges []string `json:"ip_ranges"`
+        }
+        
+        if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+            return nil, fmt.Errorf("failed to decode JSON: %v", err)
+        }
+        
+        return result.Ranges, nil
+    }
+    ```
+
+    ```go Configurable Fetcher
+    package fetchers
+
+    import (
+        "fmt"
+        "net/http"
+        "io"
+        "strings"
+    )
+
+    type MyServiceFetcher struct {
+        Region string // Configurable field
+    }
+
+    func (f MyServiceFetcher) Name() string {
+        if f.Region != "" {
+            return fmt.Sprintf("MyService-%s", f.Region)
+        }
+        return "MyService"
+    }
+
+    func (f MyServiceFetcher) Description() string {
+        if f.Region != "" {
+            return fmt.Sprintf("Fetches IP ranges for My Service in %s region.", f.Region)
+        }
+        return "Fetches global IP ranges for My Service."
+    }
+
+    func (f MyServiceFetcher) FetchIPRanges() ([]string, error) {
+        url := "https://api.myservice.com/ranges"
+        if f.Region != "" {
+            url = fmt.Sprintf("%s?region=%s", url, f.Region)
+        }
+        
+        resp, err := http.Get(url)
+        if err != nil {
+            return nil, fmt.Errorf("failed to fetch IP ranges: %v", err)
+        }
+        defer resp.Body.Close()
+        
+        body, err := io.ReadAll(resp.Body)
+        if err != nil {
+            return nil, fmt.Errorf("failed to read response: %v", err)
+        }
+        
+        // Parse newline-separated CIDR ranges
+        ranges := []string{}
+        for _, line := range strings.Split(string(body), "\n") {
+            line = strings.TrimSpace(line)
+            if line != "" && !strings.HasPrefix(line, "#") {
+                ranges = append(ranges, line)
+            }
+        }
+        
+        return ranges, nil
+    }
+    ```
+    </CodeGroup>
+
+    <Note>
+      The `Name()` method's return value will be converted to lowercase and used as the key in the generated IP ranges map. Choose a descriptive, unique name.
+    </Note>
+  </Step>
+
+  <Step title="Add your fetcher to the fetchersList">
+    Open `ranges/main.go` and add your fetcher to the `fetchersList` array around line 34:
+
+    ```go ranges/main.go
+    fetchersList := []fetchers.IPRangeFetcher{
+        fetchers.VPNFetcher{},
+        fetchers.LinodeFetcher{},
+        // ... other fetchers ...
+        fetchers.MyServiceFetcher{}, // Add your fetcher here
+    }
+    ```
+
+    For configurable fetchers, you can instantiate them with specific parameters:
+
+    ```go ranges/main.go
+    fetchersList := []fetchers.IPRangeFetcher{
+        // ... other fetchers ...
+        fetchers.MyServiceFetcher{},                    // Global ranges
+        fetchers.MyServiceFetcher{Region: "us-east-1"}, // Region-specific
+        fetchers.MyServiceFetcher{Region: "eu-west-1"}, // Another region
+    }
+    ```
+  </Step>
+
+  <Step title="Regenerate the generated.go file">
+    Run the ranges generator to fetch IP ranges and create the updated `ranges/data/generated.go` file:
+
+    ```bash
+    cd ranges/
+    go run main.go
+    ```
+
+    You should see output like:
+
+    ```
+    🚀 Starting MyService: Fetches IP ranges for My Service.
+    ✅ Completed MyService: Fetched 42 IP ranges
+    🎉 All 1337 IP ranges have been successfully written to ranges/data/generated.go
+    ```
+
+    <Tip>
+      The generator runs all fetchers concurrently, so the order of output may vary. If a fetcher fails, you'll see an error message with details.
+    </Tip>
+  </Step>
+
+  <Step title="Verify the output">
+    Check that your IP ranges were added to `ranges/data/generated.go`:
+
+    ```go ranges/data/generated.go
+    var IPRanges = map[string][]string{
+        // ... other services ...
+        "myservice": {
+            "203.0.113.0/24",
+            "2001:db8::/32",
+        },
+    }
+    ```
+
+    The key will be the lowercase version of your `Name()` return value.
+  </Step>
+
+  <Step title="Test your fetcher">
+    You can test your fetcher in isolation by creating a simple test program:
+
+    ```go test_fetcher.go
+    package main
+
+    import (
+        "fmt"
+        "pkg.jsn.cam/caddy-defender/ranges/fetchers"
+    )
+
+    func main() {
+        f := fetchers.MyServiceFetcher{}
+        ranges, err := f.FetchIPRanges()
+        if err != nil {
+            fmt.Printf("Error: %v\n", err)
+            return
+        }
+        fmt.Printf("Fetched %d ranges:\n", len(ranges))
+        for _, r := range ranges {
+            fmt.Printf("  %s\n", r)
+        }
+    }
+    ```
+
+    Run it with:
+
+    ```bash
+    go run test_fetcher.go
+    ```
+  </Step>
+</Steps>
+
+## Interface Requirements
+
+Your fetcher must satisfy these requirements:
+
+<ParamField path="Name()" type="string" required>
+  **Must return:** A unique, descriptive name for your service
+  
+  **Used for:** Map key in generated output (converted to lowercase)
+  
+  **Example:** `"MyService"` becomes key `"myservice"`
+</ParamField>
+
+<ParamField path="Description()" type="string" required>
+  **Must return:** A human-readable description of what the fetcher does
+  
+  **Used for:** Progress logging during execution
+  
+  **Example:** `"Fetches IP ranges for My Service API"`
+</ParamField>
+
+<ParamField path="FetchIPRanges()" type="([]string, error)" required>
+  **Must return:** 
+  - A slice of CIDR-formatted IP ranges (IPv4 and/or IPv6)
+  - An error if the fetch operation fails
+  
+  **CIDR format examples:**
+  - IPv4: `"192.0.2.0/24"`, `"203.0.113.128/25"`
+  - IPv6: `"2001:db8::/32"`, `"2001:db8:1234::/48"`
+  
+  **Error handling:** Return descriptive errors that help diagnose issues:
+  ```go
+  return nil, fmt.Errorf("failed to fetch from %s: %v", url, err)
+  ```
+</ParamField>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Error Handling">
+    Always return descriptive errors that include:
+    - What operation failed
+    - The URL or source being accessed
+    - The underlying error
+
+    ```go
+    if resp.StatusCode != http.StatusOK {
+        return nil, fmt.Errorf("received non-200 status code from MyService: %d", resp.StatusCode)
+    }
+
+    if err := json.Unmarshal(body, &result); err != nil {
+        return nil, fmt.Errorf("failed to unmarshal MyService JSON: %v", err)
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="HTTP Requests">
+    - Always close response bodies: `defer resp.Body.Close()`
+    - Check HTTP status codes before processing
+    - Set reasonable timeouts for HTTP clients
+    - Handle rate limiting if applicable
+
+    ```go
+    client := &http.Client{
+        Timeout: 30 * time.Second,
+    }
+    resp, err := client.Get(url)
+    if err != nil {
+        return nil, fmt.Errorf("request failed: %v", err)
+    }
+    defer resp.Body.Close()
+    ```
+  </Accordion>
+
+  <Accordion title="Data Validation">
+    Validate that fetched data is in the correct CIDR format:
+
+    ```go
+    import "net"
+
+    func validateCIDR(cidr string) error {
+        _, _, err := net.ParseCIDR(cidr)
+        return err
+    }
+    ```
+
+    Filter out invalid entries:
+
+    ```go
+    validRanges := []string{}
+    for _, r := range rawRanges {
+        if validateCIDR(r) == nil {
+            validRanges = append(validRanges, r)
+        }
+    }
+    return validRanges, nil
+    ```
+  </Accordion>
+
+  <Accordion title="Performance">
+    - Pre-allocate slices when the size is known:
+      ```go
+      ipRanges := make([]string, 0, expectedSize)
+      ```
+    - Use streaming JSON decoding for large responses:
+      ```go
+      json.NewDecoder(resp.Body).Decode(&result)
+      ```
+    - Consider caching if the API has rate limits
+  </Accordion>
+
+  <Accordion title="Naming Conventions">
+    - Struct name: `MyServiceFetcher`
+    - File name: `myservice.go`
+    - Package: `fetchers`
+    - Name() return: `"MyService"` (will become `"myservice"` in output)
+  </Accordion>
+</AccordionGroup>
+
+## Real-World Examples
+
+Refer to these existing fetchers for implementation patterns:
+
+### Simple Static Ranges
+See `ranges/fetchers/private.go:12` - Returns hardcoded RFC 1918 private IP ranges
+
+### JSON API with Struct
+See `ranges/fetchers/cloudflare.go:20` - Fetches from Cloudflare's API and parses JSON response
+
+### Multiple API Endpoints
+See `ranges/fetchers/openai.go:19` - Combines results from multiple OpenAI JSON endpoints
+
+### Text File Parsing
+See `ranges/fetchers/vpn.go:21` - Fetches and parses newline-delimited IP ranges from a text file
+
+### Configurable with Validation
+See `ranges/fetchers/asn.go:24` - Accepts ASN list parameter with validation in constructor
+
+### Subdirectory Organization
+See `ranges/fetchers/aws/` - Complex fetchers can be organized in subdirectories with shared utilities
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Fetcher not executing">
+    **Problem:** Your fetcher doesn't appear in the output
+
+    **Solutions:**
+    - Verify you added it to `fetchersList` in `ranges/main.go:34`
+    - Check for compilation errors: `go build ./ranges`
+    - Ensure the package name is `fetchers`
+  </Accordion>
+
+  <Accordion title="Error: oldString not found">
+    **Problem:** Fetch completes but ranges aren't in output
+
+    **Solutions:**
+    - Check that `FetchIPRanges()` returns non-empty slice
+    - Verify CIDR format is correct
+    - Look for errors in console output (❌ messages)
+  </Accordion>
+
+  <Accordion title="Import cycle errors">
+    **Problem:** `import cycle not allowed`
+
+    **Solutions:**
+    - Don't import `ranges/main` from your fetcher
+    - Use the `fetchers` package, not a subdirectory
+    - For complex fetchers, create a subdirectory like `fetchers/myservice/`
+  </Accordion>
+
+  <Accordion title="Timeout or slow fetching">
+    **Problem:** Fetcher takes too long or times out
+
+    **Solutions:**
+    - Add HTTP client timeout:
+      ```go
+      client := &http.Client{Timeout: 30 * time.Second}
+      ```
+    - Check if the API requires authentication
+    - Verify the URL is accessible from your network
+    - Consider pagination for large datasets
+  </Accordion>
+</AccordionGroup>
+
+## Advanced: Conditional Fetchers
+
+Some fetchers are only added to the list based on flags or conditions:
+
+### Flag-Based Inclusion
+
+From `ranges/main.go:57`:
+
+```go
+if fetchTor {
+    fetchersList = append(fetchersList, fetchers.TorFetcher{})
+}
+```
+
+### Dynamic Fetcher Creation
+
+From `ranges/main.go:64`:
+
+```go
+if asnList != "" {
+    asns := strings.Split(asnList, ",")
+    fetchersList = append(fetchersList, fetchers.NewASNFetcher(asns))
+}
+```
+
+You can add your own flags in `ranges/main.go`:
+
+```go
+var (
+    outputFormat string
+    outputFile   string
+    myServiceKey string // Add your flag
+)
+
+func main() {
+    flag.StringVar(&myServiceKey, "myservice-key", "", "API key for MyService")
+    flag.Parse()
+    
+    // ...
+    
+    if myServiceKey != "" {
+        fetchersList = append(fetchersList, fetchers.MyServiceFetcher{
+            APIKey: myServiceKey,
+        })
+    }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Fetchers Overview" icon="list" href="/api/fetchers/overview">
+    Review the fetcher system architecture and available fetchers
+  </Card>
+  <Card title="Using IP Ranges" icon="shield" href="/api/ip-ranges/overview">
+    Learn how to use the generated IP ranges in your Caddy configuration
+  </Card>
+</CardGroup>

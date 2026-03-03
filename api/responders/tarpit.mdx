@@ -1,0 +1,490 @@
+---
+title: 'Tarpit Responder'
+description: 'Stream content at an extremely slow rate to waste scraper resources'
+---
+
+The Tarpit responder deliberately streams data at a painfully slow rate, tying up scraper connections and wasting their resources while appearing to respond normally.
+
+## Overview
+
+Inspired by network tarpit techniques, this responder:
+- Sends HTTP headers immediately (appears responsive)
+- Streams content at a configurable slow rate (default: 24 bytes/second)
+- Holds connections open for an extended period
+- Wastes bandwidth, time, and resources of scrapers
+- Can serve content from files, HTTP sources, or just hold the connection
+
+## Configuration
+
+The Tarpit responder requires a `tarpit_config` block with its settings.
+
+### Required Parameters
+
+<ParamField path="ranges" type="string[]">
+  IP ranges to tarpit. Can be CIDR notations or predefined service keys.
+  
+  **Default:** `["aws", "azurepubliccloud", "deepseek", "gcloud", "githubcopilot", "openai"]`
+</ParamField>
+
+### Tarpit Configuration Block
+
+<ParamField path="tarpit_config.timeout" type="duration" required>
+  Maximum duration to keep the connection open.
+  
+  **Must be greater than 0.**
+  
+  Examples: `30s`, `5m`, `1h`
+</ParamField>
+
+<ParamField path="tarpit_config.bytes_per_second" type="number" required>
+  Rate at which to stream data (bytes per second).
+  
+  **Must be greater than 10.**
+  
+  **Default:** `24` (extremely slow)
+  
+  Recommendations:
+  - `24` - Maximum annoyance (1 minute for 1.4KB)
+  - `100` - Still slow but less extreme
+  - `1000` - Moderate slowdown
+</ParamField>
+
+<ParamField path="tarpit_config.code" type="number">
+  HTTP status code to return.
+  
+  **Default:** `200`
+</ParamField>
+
+<ParamField path="tarpit_config.headers" type="object">
+  Custom HTTP headers to include in the response.
+  
+  **Default:** `{}`
+</ParamField>
+
+<ParamField path="tarpit_config.content" type="string">
+  Content source in the format `protocol://path`
+  
+  **Supported protocols:**
+  - `file://` - Serve content from local file
+  - `http://` - Fetch and cache content from HTTP URL
+  - `https://` - Fetch and cache content from HTTPS URL
+  - Empty - Just hold connection without sending content
+  
+  **Default:** Empty (timeout-based holding)
+</ParamField>
+
+## Content Sources
+
+### File Content
+
+```caddyfile
+tarpit_config {
+    content file:///var/www/large-file.txt
+    timeout 5m
+    bytes_per_second 24
+}
+```
+
+Serves content from local filesystem slowly.
+
+### HTTP/HTTPS Content
+
+```caddyfile
+tarpit_config {
+    content https://www.example.com/robots.txt
+    timeout 2m
+    bytes_per_second 50
+}
+```
+
+Fetches content from URL (cached locally) and serves it slowly.
+
+### No Content (Timeout Only)
+
+```caddyfile
+tarpit_config {
+    timeout 1h
+    bytes_per_second 24
+}
+```
+
+Holds the connection open for the timeout duration without serving content.
+
+## Examples
+
+<CodeGroup>
+
+```caddyfile Caddyfile - Basic Tarpit
+localhost:8080 {
+    defender tarpit {
+        ranges openai aws deepseek
+        tarpit_config {
+            timeout 30s
+            bytes_per_second 24
+            response_code 200
+        }
+    }
+    respond "Fast content for humans"
+}
+```
+
+```caddyfile Caddyfile - With File Content
+example.com {
+    defender tarpit {
+        ranges scrapers
+        tarpit_config {
+            content file:///var/www/decoy.txt
+            timeout 5m
+            bytes_per_second 24
+            response_code 200
+        }
+    }
+    respond "Real content"
+}
+```
+
+```caddyfile Caddyfile - With HTTP Content
+example.com {
+    defender tarpit {
+        ranges openai
+        tarpit_config {
+            content https://www.cloudflare.com/robots.txt
+            timeout 2m
+            bytes_per_second 50
+            response_code 200
+            headers {
+                X-You-Got "Played"
+            }
+        }
+    }
+    respond "Content"
+}
+```
+
+```caddyfile Caddyfile - Maximum Annoyance
+api.example.com {
+    defender tarpit {
+        ranges aws gcloud azure private
+        tarpit_config {
+            content file:///var/www/huge-fake-data.json
+            timeout 1h
+            bytes_per_second 10
+            response_code 200
+            headers {
+                Content-Type "application/json"
+                X-Custom-Header "Slow is smooth"
+            }
+        }
+    }
+    reverse_proxy localhost:3000
+}
+```
+
+```json JSON Configuration
+{
+  "handler": "defender",
+  "raw_responder": "tarpit",
+  "ranges": ["openai", "aws", "gcloud"],
+  "tarpit_config": {
+    "headers": {
+      "X-You-Got": "Played"
+    },
+    "content": "file:///var/www/decoy.txt",
+    "timeout": "30s",
+    "bytes_per_second": 24,
+    "code": 200
+  }
+}
+```
+
+</CodeGroup>
+
+## Implementation Details
+
+The Tarpit responder is implemented in `responders/tarpit/tarpit.go:82`:
+
+### Streaming Algorithm
+
+1. **Open content stream** from configured source
+2. **Read first 512 bytes** to detect content type
+3. **Send HTTP headers** immediately (appears responsive)
+4. **Write first chunk** to client
+5. **Start ticker** that fires every 100ms
+6. **Each tick**: Send `bytes_per_second / 10` bytes
+7. **Continue** until timeout or EOF reached
+8. **Close** connection gracefully
+
+```go
+chunk := make([]byte, r.Config.BytesPerSecond/10)
+
+ticker := time.NewTicker(time.Millisecond * 100)
+defer ticker.Stop()
+
+timeout := time.After(r.Config.Timeout)
+
+for {
+    select {
+    case <-ticker.C:
+        // Send chunk every 100ms
+    case <-timeout:
+        // Stop after timeout
+        return nil
+    }
+}
+```
+
+### Content Type Detection
+
+Content type is automatically detected from the first 512 bytes using `http.DetectContentType()`.
+
+## HTTP Response
+
+<ResponseField name="status" type="number">
+  Configured response code (default: 200)
+</ResponseField>
+
+<ResponseField name="Content-Type" type="string">
+  Auto-detected from content or set via headers
+</ResponseField>
+
+<ResponseField name="body" type="stream">
+  Streamed at configured bytes_per_second rate
+</ResponseField>
+
+<ResponseField name="Custom Headers" type="object">
+  Any headers configured in tarpit_config.headers
+</ResponseField>
+
+## Client Experience
+
+### What Scrapers See
+
+```bash
+$ time curl http://example.com
+# Connection appears to work
+# Headers received immediately
+# Content trickles in extremely slowly...
+# (waits 30 seconds for a few kilobytes)
+
+real    0m30.524s
+user    0m0.008s
+sys     0m0.012s
+```
+
+### Resource Impact on Scrapers
+
+- **Connection slots** - Ties up connection pool
+- **Memory** - Buffers accumulate slowly
+- **Time** - Wastes significant wall-clock time
+- **Bandwidth** - Over extended period, still uses bandwidth
+- **Processing** - May trigger timeouts and retries
+
+## Use Cases
+
+### Maximum Scraper Annoyance
+Make scraping as painful as possible:
+
+```caddyfile
+defender tarpit {
+    ranges openai deepseek
+    tarpit_config {
+        content file:///var/www/100mb-junk.txt
+        timeout 1h
+        bytes_per_second 10
+    }
+}
+```
+
+### AI Training Poisoning
+Serve garbage slowly to waste maximum resources:
+
+```caddyfile
+defender tarpit {
+    ranges openai
+    tarpit_config {
+        content file:///var/www/garbage-data.txt
+        timeout 10m
+        bytes_per_second 24
+    }
+}
+```
+
+### Connection Exhaustion
+Tie up scraper connection pools:
+
+```caddyfile
+defender tarpit {
+    ranges scrapers
+    tarpit_config {
+        timeout 30m
+        bytes_per_second 1
+    }
+}
+```
+
+## Advantages
+
+1. **Resource Waste** - Maximizes scraper resource consumption
+2. **Appears Valid** - Returns 200 OK, scrapers think it's working
+3. **Connection Exhaustion** - Ties up connection pools
+4. **Time Waste** - Scrapers spend ages getting minimal data
+5. **Configurable** - Fine-tune annoyance level
+6. **No Blocking Signal** - Scrapers can't easily detect they're being tarpitted
+
+## Disadvantages
+
+1. **Server Resources** - Keeps connections open longer
+2. **Memory Usage** - Each connection consumes server resources
+3. **Complexity** - More complex than simple blocking
+4. **Bandwidth Over Time** - Eventually sends the data (if content provided)
+
+## Comparison with Other Responders
+
+- **vs Block**: Tarpit wastes resources, Block denies immediately
+- **vs Drop**: Tarpit holds connection, Drop terminates it
+- **vs Garbage**: Tarpit sends slowly, Garbage sends quickly
+- **vs Custom**: Tarpit streams, Custom sends full response
+
+## When to Use Tarpit
+
+**Use Tarpit when:**
+- You want to waste maximum scraper resources
+- Connection exhaustion is a goal
+- Time-wasting is more valuable than bandwidth savings
+- You want scrapers to think they're succeeding (slowly)
+
+**Don't use Tarpit when:**
+- Server connection limits are tight
+- You need to minimize resource usage
+- Simple blocking is sufficient
+- Legitimate users might be affected
+
+## Performance Considerations
+
+### Connection Limits
+
+Each tarpitted connection stays open for the timeout duration. Monitor server connection limits:
+
+```bash
+# Check active connections
+netstat -an | grep ESTABLISHED | wc -l
+
+# Check Caddy limits
+caddy environ
+```
+
+### Memory Usage
+
+Each connection uses memory for:
+- HTTP buffers
+- Content reader
+- Ticker
+- Response writer
+
+Monitor with:
+
+```bash
+top -p $(pgrep caddy)
+```
+
+## Best Practices
+
+1. **Set reasonable timeouts** - Don't exhaust server resources (e.g., 30s-5m)
+2. **Monitor connection counts** - Watch for resource exhaustion
+3. **Use small bytes_per_second** - 10-50 for maximum annoyance
+4. **Serve garbage content** - Combine with useless data
+5. **Target specific ranges** - Don't tarpit legitimate users
+6. **Test thoroughly** - Ensure you're not tarpitting yourself
+
+## Validation Errors
+
+The tarpit config is validated:
+
+```go
+if r.Config.Timeout <= 0 {
+    return errors.New("tarpit timeout must be greater than 0")
+}
+if r.Config.BytesPerSecond <= 10 {
+    return errors.New("tarpit bytes_per_second must be greater than 10")
+}
+```
+
+Common errors:
+- `tarpit timeout must be greater than 0`
+- `tarpit bytes_per_second must be greater than 10`
+- `unsupported tarpit Content protocol`
+
+## Testing
+
+Test tarpit behavior:
+
+```bash
+# Time how long a request takes
+time curl http://example.com
+
+# Watch data trickle in
+curl -v http://example.com
+
+# Simulate blocked IP
+time curl -H "X-Forwarded-For: 20.202.43.67" http://example.com
+
+# Test with timeout
+curl --max-time 5 http://example.com
+```
+
+## Advanced Examples
+
+### Different Speeds for Different Sources
+
+```caddyfile
+example.com {
+    # Super slow for OpenAI
+    defender tarpit {
+        ranges openai
+        tarpit_config {
+            timeout 1h
+            bytes_per_second 10
+        }
+    }
+    
+    # Moderately slow for AWS
+    defender tarpit {
+        ranges aws
+        tarpit_config {
+            timeout 5m
+            bytes_per_second 100
+        }
+    }
+    
+    respond "Fast for humans"
+}
+```
+
+### Serve Realistic-Looking Content Slowly
+
+```caddyfile
+api.example.com {
+    defender tarpit {
+        ranges scrapers
+        tarpit_config {
+            content file:///var/www/fake-api-response.json
+            timeout 10m
+            bytes_per_second 24
+            response_code 200
+            headers {
+                Content-Type "application/json"
+                X-API-Version "1.0"
+            }
+        }
+    }
+    
+    reverse_proxy localhost:3000
+}
+```
+
+## Related Documentation
+
+- [Garbage Responder](/api/responders/garbage) - Fast garbage delivery
+- [Drop Responder](/api/responders/drop) - Drop connections instead
+- [Block Responder](/api/responders/block) - Simple blocking
+- [Network Tarpits](https://en.wikipedia.org/wiki/Tarpit_(networking)) - Background on tarpit technique

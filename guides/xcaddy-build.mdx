@@ -1,0 +1,275 @@
+---
+title: Building with xcaddy
+description: Build a custom Caddy binary with the Defender plugin using xcaddy
+---
+
+`xcaddy` is the official tool for building custom Caddy binaries with plugins. This guide shows you how to compile Caddy with the Defender plugin from source.
+
+## Prerequisites
+
+<Note>
+  You need Go 1.21 or later installed on your system. Check your version with `go version`.
+</Note>
+
+- **Go**: [Download and install Go](https://golang.org/doc/install)
+- **xcaddy**: Build tool for Caddy
+
+## Installation Steps
+
+<Steps>
+  <Step title="Install xcaddy">
+    Install `xcaddy` using Go:
+
+    ```bash
+    go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+    ```
+
+    Verify the installation:
+
+    ```bash
+    xcaddy version
+    ```
+
+    <Tip>
+      Make sure your `$GOPATH/bin` directory is in your `$PATH`. On most systems, this is `~/go/bin`.
+    </Tip>
+  </Step>
+
+  <Step title="Build Caddy with Defender Plugin">
+    Run the build command to compile Caddy with the Defender plugin:
+
+    ```bash
+    xcaddy build --with pkg.jsn.cam/caddy-defender
+    ```
+
+    This command:
+    - Downloads the latest Caddy source
+    - Fetches the Defender plugin from `pkg.jsn.cam/caddy-defender`
+    - Compiles everything into a single `caddy` binary
+
+    The build process may take a few minutes depending on your system.
+  </Step>
+
+  <Step title="Verify the Build">
+    Check that the Defender plugin is included:
+
+    ```bash
+    ./caddy list-modules | grep defender
+    ```
+
+    You should see output like:
+    ```
+    http.handlers.defender
+    ```
+  </Step>
+
+  <Step title="Run Your Custom Caddy">
+    Create a `Caddyfile` with Defender configuration:
+
+    ```caddyfile
+    localhost:8080 {
+        defender block {
+            ranges openai aws
+        }
+        respond "Protected by Caddy Defender!"
+    }
+    ```
+
+    Run Caddy with your configuration:
+
+    ```bash
+    ./caddy run --config Caddyfile
+    ```
+  </Step>
+</Steps>
+
+## Build Options
+
+### Building a Specific Version
+
+Build Caddy v2.8.4 with the Defender plugin:
+
+```bash
+xcaddy build v2.8.4 --with pkg.jsn.cam/caddy-defender
+```
+
+### Building from Local Source
+
+If you've cloned the Defender repository locally and want to build from your local copy:
+
+```bash
+xcaddy build --with pkg.jsn.cam/caddy-defender=/path/to/local/caddy-defender
+```
+
+This is useful for:
+- Testing local modifications
+- Development and debugging
+- Using unreleased features
+
+### Building with Multiple Plugins
+
+Add additional Caddy plugins to your build:
+
+```bash
+xcaddy build \
+  --with pkg.jsn.cam/caddy-defender \
+  --with github.com/mholt/caddy-ratelimit \
+  --with github.com/caddy-dns/cloudflare
+```
+
+## Installing System-Wide
+
+<Warning>
+  Installing system-wide will replace any existing Caddy installation. Back up your current binary if needed.
+</Warning>
+
+After building, install the binary to your system:
+
+### Linux/macOS
+
+```bash
+sudo mv caddy /usr/local/bin/
+sudo chmod +x /usr/local/bin/caddy
+```
+
+Verify the installation:
+
+```bash
+caddy version
+```
+
+### Windows
+
+Move `caddy.exe` to a directory in your PATH, such as `C:\Windows\System32\`.
+
+## Setting Up as a Service
+
+### systemd (Linux)
+
+Create a systemd service file at `/etc/systemd/system/caddy.service`:
+
+```ini
+[Unit]
+Description=Caddy
+Documentation=https://caddyserver.com/docs/
+After=network.target network-online.target
+Requires=network-online.target
+
+[Service]
+Type=notify
+User=caddy
+Group=caddy
+ExecStart=/usr/local/bin/caddy run --environ --config /etc/caddy/Caddyfile
+ExecReload=/usr/local/bin/caddy reload --config /etc/caddy/Caddyfile --force
+TimeoutStopSec=5s
+LimitNOFILE=1048576
+PrivateTmp=true
+ProtectSystem=full
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start the service:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable caddy
+sudo systemctl start caddy
+```
+
+## Custom Build Tips
+
+<Tip>
+  **Build for different architectures**: Use Go's cross-compilation to build for other platforms:
+  ```bash
+  GOOS=linux GOARCH=amd64 xcaddy build --with pkg.jsn.cam/caddy-defender
+  ```
+</Tip>
+
+### Optimizing Binary Size
+
+Reduce the binary size by stripping debug information:
+
+```bash
+xcaddy build --with pkg.jsn.cam/caddy-defender
+strip caddy
+```
+
+### Development Builds
+
+For faster builds during development, disable optimizations:
+
+```bash
+go build -gcflags="all=-N -l" -o caddy
+```
+
+## Updating Your Build
+
+To update to the latest version of Caddy and the Defender plugin:
+
+<Steps>
+  <Step title="Clean Previous Build">
+    ```bash
+    rm caddy
+    ```
+  </Step>
+
+  <Step title="Rebuild with Latest Versions">
+    ```bash
+    xcaddy build --with pkg.jsn.cam/caddy-defender
+    ```
+  </Step>
+
+  <Step title="Replace Existing Binary">
+    ```bash
+    sudo systemctl stop caddy
+    sudo mv caddy /usr/local/bin/
+    sudo systemctl start caddy
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### xcaddy Not Found
+
+Ensure `$GOPATH/bin` is in your PATH:
+
+```bash
+export PATH=$PATH:$(go env GOPATH)/bin
+```
+
+Add this to your `~/.bashrc` or `~/.zshrc` to make it permanent.
+
+### Build Failures
+
+If the build fails with module errors:
+
+```bash
+# Clear Go module cache
+go clean -modcache
+
+# Retry the build
+xcaddy build --with pkg.jsn.cam/caddy-defender
+```
+
+### Permission Errors When Running
+
+On Linux, allow Caddy to bind to privileged ports:
+
+```bash
+sudo setcap CAP_NET_BIND_SERVICE=+eip ./caddy
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Advanced Build" icon="wrench" href="/guides/advanced-build">
+    Build with custom IP range fetchers
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/caddyfile">
+    Configure the Defender plugin
+  </Card>
+</CardGroup>

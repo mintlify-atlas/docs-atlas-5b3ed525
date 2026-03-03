@@ -1,0 +1,175 @@
+---
+title: 'Custom Responses'
+description: 'Return tailored messages with custom status codes for blocked requests'
+---
+
+## Overview
+
+The `custom` responder allows you to return custom text messages with configurable HTTP status codes. This gives you full control over what blocked users see and how the response appears.
+
+## Configuration Options
+
+| Option | Required | Default | Description |
+|--------|----------|---------|-------------|
+| `message` | Yes | - | The text message to return |
+| `status_code` | No | 200 | HTTP status code (e.g., 403, 404, 451) |
+
+## When to Use
+
+Use the `custom` responder when:
+- You want to provide helpful error messages to users
+- You need to use specific HTTP status codes
+- You want to disguise blocked content (e.g., return 404 instead of 403)
+- Legal compliance requires specific responses (e.g., HTTP 451 for geo-blocking)
+
+## Configuration Examples
+
+<Tabs>
+  <Tab title="Caddyfile">
+    ### Example 1: Default 200 OK
+
+    ```caddyfile
+    localhost:8080 {
+        defender custom {
+            ranges 10.0.0.0/8
+            message "Access restricted for your network"
+        }
+        respond "Public content"
+    }
+    ```
+
+    Returns a friendly message with a 200 OK status (default). This can make the block less obvious to automated tools.
+
+    ### Example 2: Custom 403 Status
+
+    ```caddyfile
+    localhost:8080 {
+        defender custom {
+            ranges openai aws
+            message "You don't have permission to access this API"
+            status_code 403
+        }
+        respond "Public content"
+    }
+    ```
+
+    Explicitly blocks AI scrapers and AWS ranges with a clear 403 Forbidden response.
+
+    ### Example 3: Stealth Mode with 404
+
+    ```caddyfile
+    {
+        auto_https off
+        order defender after header
+        debug
+    }
+
+    :80 {
+        bind 127.0.0.1 ::1
+
+        defender custom {
+            ranges private
+            message "Page not found"
+            status_code 404
+        }
+        respond "This is what a human sees"
+    }
+
+    :83 {
+        bind 127.0.0.1 ::1
+
+        respond "Clear text HTTP"
+    }
+    ```
+
+    Makes blocked content appear as if it doesn't exist by returning a 404 Not Found response.
+
+    ### Example 4: Legal Compliance with 451
+
+    ```caddyfile
+    example.com {
+        defender custom {
+            ranges 192.168.1.0/24
+            message "This content is not available in your region due to legal restrictions"
+            status_code 451
+        }
+        respond "Content for allowed regions"
+    }
+    ```
+
+    Uses HTTP 451 (Unavailable For Legal Reasons) for geo-blocking or legal compliance scenarios.
+  </Tab>
+
+  <Tab title="JSON">
+    ### Example 1: Default 200 OK
+
+    ```json
+    {
+        "handler": "defender",
+        "raw_responder": "custom",
+        "ranges": ["10.0.0.0/8"],
+        "message": "Access restricted for your network"
+    }
+    ```
+
+    ### Example 2: Custom 403 Status
+
+    ```json
+    {
+        "handler": "defender",
+        "raw_responder": "custom",
+        "ranges": ["openai", "aws"],
+        "message": "You don't have permission to access this API",
+        "status_code": 403
+    }
+    ```
+
+    ### Example 3: Stealth Mode with 404
+
+    ```json
+    {
+        "handler": "defender",
+        "raw_responder": "custom",
+        "ranges": ["private"],
+        "message": "Page not found",
+        "status_code": 404
+    }
+    ```
+
+    ### Example 4: Legal Compliance with 451
+
+    ```json
+    {
+        "handler": "defender",
+        "raw_responder": "custom",
+        "ranges": ["192.168.1.0/24"],
+        "message": "This content is not available in your region due to legal restrictions",
+        "status_code": 451
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Common Status Codes
+
+<CodeGroup>
+```text 200 OK
+Use when you want to appear compliant but serve different content
+```
+
+```text 403 Forbidden
+Clear indication that access is denied
+```
+
+```text 404 Not Found
+Makes content appear non-existent (stealth mode)
+```
+
+```text 451 Unavailable For Legal Reasons
+For geo-blocking or legal compliance
+```
+</CodeGroup>
+
+<Note>
+  The `message` field is required when using the custom responder. If you don't need a custom message, use the [block responder](/examples/block) instead.
+</Note>

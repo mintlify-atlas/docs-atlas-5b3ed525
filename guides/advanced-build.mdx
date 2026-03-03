@@ -1,0 +1,389 @@
+---
+title: Advanced Build Configuration
+description: Build Caddy Defender with custom IP range fetchers including Tor and ASN support
+---
+
+Some IP range fetchers are not enabled by default in the standard Caddy Defender build. This guide shows you how to build custom binaries with additional features like Tor exit node blocking and ASN-based filtering.
+
+## Why Advanced Builds?
+
+By default, Caddy Defender includes IP ranges for major cloud providers and AI services. However, some features require build-time configuration:
+
+- **Tor exit nodes**: Dynamic list of Tor network exit points
+- **ASN filtering**: Block entire Autonomous System Numbers (ISPs, hosting providers)
+
+These features are optional because:
+- They can significantly increase binary size
+- They require user-specific configuration (ASN numbers)
+- They may impact build time
+
+## Build-Time IP Range Fetchers
+
+Caddy Defender uses a Go program at `ranges/main.go` to fetch and embed IP ranges at build time. This ensures fast runtime performance without external API calls.
+
+### Available Fetchers
+
+<CardGroup cols={2}>
+  <Card title="Tor Exit Nodes" icon="shield">
+    Block traffic from Tor network exit points
+  </Card>
+  <Card title="ASN Ranges" icon="network-wired">
+    Block entire autonomous systems by ASN number
+  </Card>
+</CardGroup>
+
+## Building with Tor Support
+
+<Steps>
+  <Step title="Clone the Repository">
+    First, clone the Caddy Defender source code:
+
+    ```bash
+    git clone https://github.com/JasonLovesDoggo/caddy-defender.git
+    cd caddy-defender
+    ```
+  </Step>
+
+  <Step title="Run IP Range Generator with Tor">
+    Execute the range generator with the `--fetch-tor` flag:
+
+    ```bash
+    go run ranges/main.go --fetch-tor
+    ```
+
+    This regenerates `ranges/data/generated.go` with Tor exit node IP ranges included under the `tor` key.
+
+    <Note>
+      The Tor fetcher converts individual node IPs to IP ranges for efficient storage and lookup.
+    </Note>
+  </Step>
+
+  <Step title="Build with xcaddy">
+    Build the Caddy binary with your custom-generated data:
+
+    ```bash
+    xcaddy build --with pkg.jsn.cam/caddy-defender=$(pwd)
+    ```
+
+    The `$(pwd)` tells xcaddy to use your local copy with the regenerated IP ranges.
+  </Step>
+
+  <Step title="Use in Caddyfile">
+    Now you can use the `tor` key in your configuration:
+
+    ```caddyfile
+    example.com {
+        defender block {
+            ranges tor openai
+        }
+        respond "Protected from Tor and AI crawlers!"
+    }
+    ```
+  </Step>
+</Steps>
+
+## Building with ASN Support
+
+ASN (Autonomous System Number) filtering allows you to block entire networks operated by specific organizations.
+
+<Steps>
+  <Step title="Identify Target ASNs">
+    Determine which ASNs you want to block. Common examples:
+
+    - **AS15169**: Google
+    - **AS13335**: Cloudflare
+    - **AS16509**: Amazon AWS
+    - **AS8075**: Microsoft
+    - **AS14061**: DigitalOcean
+
+    <Tip>
+      Use [Hurricane Electric's BGP Toolkit](https://bgp.he.net/) to look up ASNs for specific organizations.
+    </Tip>
+  </Step>
+
+  <Step title="Run Generator with ASN List">
+    Use the `--asn` flag with a comma-separated list of ASNs:
+
+    ```bash
+    go run ranges/main.go --asn "AS15169,AS13335"
+    ```
+
+    This adds IP ranges for Google and Cloudflare to the `asn` key in the generated data.
+  </Step>
+
+  <Step title="Build the Binary">
+    ```bash
+    xcaddy build --with pkg.jsn.cam/caddy-defender=$(pwd)
+    ```
+  </Step>
+
+  <Step title="Configure in Caddyfile">
+    Use the `asn` key to block the specified autonomous systems:
+
+    ```caddyfile
+    example.com {
+        defender block {
+            ranges asn
+        }
+        respond "ASN-based blocking enabled"
+    }
+    ```
+  </Step>
+</Steps>
+
+## Combining Multiple Fetchers
+
+You can enable both Tor and ASN fetchers in a single build:
+
+```bash
+go run ranges/main.go --fetch-tor --asn "AS15169,AS13335,AS16509"
+```
+
+This generates data with both `tor` and `asn` keys available:
+
+```caddyfile
+example.com {
+    defender block {
+        ranges tor asn openai aws
+    }
+    respond "Maximum protection enabled!"
+}
+```
+
+## Building with Docker
+
+For production deployments, build a custom Docker image with your desired fetchers:
+
+<CodeGroup>
+```dockerfile Dockerfile (with Tor)
+FROM caddy:builder AS builder
+
+# Install xcaddy
+RUN go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+
+# Clone the repository
+WORKDIR /app
+RUN git clone https://github.com/JasonLovesDoggo/caddy-defender.git
+
+# Generate IP ranges with Tor support
+WORKDIR /app/caddy-defender
+RUN go run ranges/main.go --fetch-tor
+
+# Build Caddy with custom data
+RUN xcaddy build --with pkg.jsn.cam/caddy-defender=/app/caddy-defender
+
+# Final image
+FROM caddy:latest
+COPY --from=builder /app/caddy-defender/caddy /usr/bin/caddy
+```
+
+```dockerfile Dockerfile (with ASN)
+FROM caddy:builder AS builder
+
+RUN go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+
+WORKDIR /app
+RUN git clone https://github.com/JasonLovesDoggo/caddy-defender.git
+
+WORKDIR /app/caddy-defender
+# Block Google, Cloudflare, and AWS
+RUN go run ranges/main.go --asn "AS15169,AS13335,AS16509"
+
+RUN xcaddy build --with pkg.jsn.cam/caddy-defender=/app/caddy-defender
+
+FROM caddy:latest
+COPY --from=builder /app/caddy-defender/caddy /usr/bin/caddy
+```
+
+```dockerfile Dockerfile (with both)
+FROM caddy:builder AS builder
+
+RUN go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+
+WORKDIR /app
+RUN git clone https://github.com/JasonLovesDoggo/caddy-defender.git
+
+WORKDIR /app/caddy-defender
+# Enable both Tor and ASN fetchers
+RUN go run ranges/main.go --fetch-tor --asn "AS15169,AS13335,AS16509"
+
+RUN xcaddy build --with pkg.jsn.cam/caddy-defender=/app/caddy-defender
+
+FROM caddy:latest
+COPY --from=builder /app/caddy-defender/caddy /usr/bin/caddy
+```
+</CodeGroup>
+
+**Build and run the custom image:**
+
+```bash
+# Build the image
+docker build -t caddy-defender-custom .
+
+# Run the container
+docker run -d \
+  --name caddy \
+  -v /path/to/Caddyfile:/etc/caddy/Caddyfile \
+  -p 80:80 -p 443:443 \
+  caddy-defender-custom
+```
+
+## Generator Command Reference
+
+The `ranges/main.go` program supports several flags:
+
+| Flag | Description | Example |
+|------|-------------|----------|
+| `--fetch-tor` | Enable Tor exit node fetching | `--fetch-tor` |
+| `--asn` | Comma-separated ASN list | `--asn "AS15169,AS13335"` |
+| `--format` | Output format (go or json) | `--format json` |
+| `--output` | Output file path | `--output custom.go` |
+
+### Output Formats
+
+**Go format (default):**
+```bash
+go run ranges/main.go --fetch-tor --format go
+```
+Generates `ranges/data/generated.go` for embedding in the binary.
+
+**JSON format:**
+```bash
+go run ranges/main.go --asn "AS15169" --format json --output ranges.json
+```
+Generates a JSON file for external consumption or inspection.
+
+## Performance Considerations
+
+<Warning>
+  Enabling Tor and ASN fetchers increases binary size and build time. Consider the trade-offs for your use case.
+</Warning>
+
+### Binary Size Impact
+
+- **Standard build**: ~45-50 MB
+- **With Tor**: +5-10 MB
+- **With ASN (5 ASNs)**: +2-5 MB per ASN
+- **With both**: Varies based on ASN count
+
+### Build Time Impact
+
+- **Standard build**: 1-2 minutes
+- **With Tor**: +30-60 seconds (fetching exit node list)
+- **With ASN**: +10-30 seconds per ASN (fetching BGP data)
+
+### Runtime Performance
+
+<Note>
+  Runtime performance is **not affected** by additional IP ranges. All lookups use the high-performance BART (Balanced ART) data structure, maintaining O(log n) complexity regardless of range count.
+</Note>
+
+## When to Use Advanced Builds
+
+### Use Tor Blocking When:
+
+- You need to prevent anonymous access
+- Your service is targeted by Tor-based scrapers
+- Compliance requires blocking anonymizing networks
+- You operate a regional service with geo-restrictions
+
+### Use ASN Blocking When:
+
+- You want to block entire hosting providers
+- You need to prevent datacenter-based scraping
+- You have specific ASN-based threat intelligence
+- You want granular control over cloud provider access
+
+### Skip Advanced Builds If:
+
+- You only need to block major AI services (use default build)
+- Binary size is a critical constraint
+- You need fast CI/CD build times
+- You prefer runtime-configurable IP lists
+
+## Updating IP Ranges
+
+IP ranges change over time. To update:
+
+<Steps>
+  <Step title="Pull Latest Source">
+    ```bash
+    cd caddy-defender
+    git pull origin main
+    ```
+  </Step>
+
+  <Step title="Regenerate Ranges">
+    ```bash
+    go run ranges/main.go --fetch-tor --asn "AS15169,AS13335"
+    ```
+  </Step>
+
+  <Step title="Rebuild Binary">
+    ```bash
+    xcaddy build --with pkg.jsn.cam/caddy-defender=$(pwd)
+    ```
+  </Step>
+
+  <Step title="Deploy Updated Binary">
+    ```bash
+    sudo systemctl stop caddy
+    sudo mv caddy /usr/local/bin/
+    sudo systemctl start caddy
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+  Automate this process with a monthly cron job to keep IP ranges current.
+</Tip>
+
+## Troubleshooting
+
+### Generator Fails to Fetch Data
+
+If the range generator fails:
+
+```bash
+# Check your internet connection
+ping 8.8.8.8
+
+# Verify Go can fetch modules
+go env -w GOPROXY=https://proxy.golang.org,direct
+
+# Retry with verbose output
+go run ranges/main.go --fetch-tor -v
+```
+
+### Invalid ASN Format
+
+ASNs must be prefixed with "AS":
+
+```bash
+# Correct
+go run ranges/main.go --asn "AS15169,AS13335"
+
+# Incorrect
+go run ranges/main.go --asn "15169,13335"
+```
+
+### Generated File Not Found
+
+Ensure you're building from the repository root:
+
+```bash
+cd caddy-defender
+ls ranges/data/generated.go  # Should exist after running generator
+xcaddy build --with pkg.jsn.cam/caddy-defender=$(pwd)
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="gear" href="/configuration/caddyfile">
+    Learn how to configure the Defender plugin
+  </Card>
+  <Card title="Examples" icon="code" href="/examples/block">
+    See real-world configuration examples
+  </Card>
+</CardGroup>

@@ -1,0 +1,422 @@
+---
+title: 'Whitelisting'
+description: 'How to exempt specific IP addresses from blocked ranges in Caddy Defender'
+---
+
+## What is Whitelisting?
+
+Whitelisting allows you to exempt specific IP addresses from your blocked ranges. When an IP is whitelisted, it bypasses all range checks and is always allowed through, regardless of whether it would otherwise match a blocked range.
+
+This is essential when you need to block broad ranges (like entire cloud providers) but want to allow specific trusted IPs within those ranges.
+
+## How Whitelisting Works
+
+The whitelist is checked **before** range matching:
+
+1. Request arrives with client IP
+2. **Whitelist check** - if IP is whitelisted, request is immediately allowed
+3. Range check - if IP matches blocked ranges, responder is triggered
+4. If no match, request continues normally
+
+**Source Code:** `matchers/ip/ip.go:65-82`
+
+```go
+func (c *IPChecker) ReqAllowed(ctx context.Context, clientIP net.IP) bool {
+    ipAddr, err := ipToAddr(clientIP)
+    if err != nil {
+        c.log.Warn("Invalid IP address format",
+            zap.String("ip", clientIP.String()),
+            zap.Error(err))
+        return false
+    }
+
+    // Check if the IP is whitelisted
+    if ok, _ := c.whitelist.Matches(ipAddr); ok {
+        c.log.Debug("IP is whitelisted", zap.String("ip", clientIP.String()))
+        return true  // Allow immediately
+    }
+    // Check if the IP is in the blocked ranges
+    return !c.IPInRanges(ctx, ipAddr)
+}
+```
+
+<Info>
+The whitelist check happens first, so whitelisted IPs never trigger the responder even if they match blocked ranges.
+</Info>
+
+## Whitelist Implementation
+
+The whitelist is implemented as a hash map for O(1) lookup performance:
+
+**Source Code:** `matchers/whitelist/whitelist.go:8-34`
+
+```go
+type Whitelist struct {
+    ips map[netip.Addr]struct{} // Use netip.Addr for efficient IP handling
+}
+
+func Initialize(ipStrings []string) (*Whitelist, error) {
+    wl := &Whitelist{
+        ips: make(map[netip.Addr]struct{}),
+    }
+    for _, ipStr := range ipStrings {
+        ip, err := netip.ParseAddr(ipStr)
+        if err != nil {
+            return nil, fmt.Errorf("invalid IP address: %s", ipStr)
+        }
+        wl.ips[ip] = struct{}{}
+    }
+    return wl, nil
+}
+
+func (wl *Whitelist) Matches(ip netip.Addr) (bool, error) {
+    // Check if the IP is in the whitelist
+    _, ok := wl.ips[ip]
+    return ok, nil
+}
+```
+
+## Important Limitations
+
+<Warning>
+The whitelist only supports **individual IP addresses**, not CIDR ranges or subnets.
+</Warning>
+
+From the code comment in `plugin.go:97-98`:
+
+```go
+// An optional whitelist of IP addresses to exclude from blocking. If empty, no IPs are whitelisted.
+// NOTE: this only supports IP addresses, not ranges.
+```
+
+If you need to whitelist a range, you must specify each IP individually.
+
+## Configuration Examples
+
+<Tabs>
+  <Tab title="Caddyfile">
+    ```caddyfile
+    # Block all AWS IPs except specific trusted servers
+    defender block {
+        ranges aws
+        whitelist 52.95.245.1 54.239.28.85
+    }
+
+    # Block all traffic but allow specific IPs
+    defender block {
+        ranges all
+        whitelist 203.0.113.10 203.0.113.20 198.51.100.5
+    }
+
+    # Multiple ranges with whitelist
+    defender custom {
+        ranges openai gcloud aws
+        whitelist 35.247.0.1 34.102.136.180
+        message "AI crawlers blocked"
+    }
+
+    # IPv6 whitelist
+    defender drop {
+        ranges tor vpn
+        whitelist 2001:db8::1 2001:db8::2
+    }
+
+    # Mix IPv4 and IPv6
+    defender tarpit {
+        ranges all
+        whitelist 192.0.2.1 2001:db8::100
+        tarpit_config {
+            timeout 1m
+        }
+    }
+    ```
+  </Tab>
+  <Tab title="JSON">
+    ```json
+    {
+      "handler": "defender",
+      "raw_responder": "block",
+      "ranges": ["aws"],
+      "whitelist": ["52.95.245.1", "54.239.28.85"]
+    }
+    ```
+    
+    **Multiple ranges:**
+    ```json
+    {
+      "handler": "defender",
+      "raw_responder": "custom",
+      "ranges": ["openai", "gcloud", "aws"],
+      "whitelist": ["35.247.0.1", "34.102.136.180"],
+      "message": "AI crawlers blocked",
+      "status_code": 403
+    }
+    ```
+    
+    **IPv6:**
+    ```json
+    {
+      "handler": "defender",
+      "raw_responder": "drop",
+      "ranges": ["tor", "vpn"],
+      "whitelist": ["2001:db8::1", "2001:db8::2"]
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Validation
+
+Whitelist entries are validated during configuration parsing:
+
+**Source Code:** `matchers/whitelist/whitelist.go:36-45`
+
+```go
+func Validate(ipStrings []string) error {
+    for _, ipStr := range ipStrings {
+        _, err := netip.ParseAddr(ipStr)
+        if err != nil {
+            return fmt.Errorf("invalid IP address: %s", ipStr)
+        }
+    }
+    return nil
+}
+```
+
+This is called during the main validation in `config.go:242-246`:
+
+```go
+// Check if the whitelist is valid
+err := whitelist.Validate(m.Whitelist)
+if err != nil {
+    return err
+}
+```
+
+If any whitelist entry is invalid, the configuration will fail to load with a clear error message.
+
+## Common Use Cases
+
+<Accordion title="Block Cloud Provider but Allow Your Servers">
+  You're hosting on AWS but want to block all other AWS IPs:
+
+  ```caddyfile
+  defender block {
+      ranges aws
+      whitelist 52.95.245.10 52.95.245.11  # Your EC2 instances
+  }
+  ```
+
+  This blocks all AWS traffic except requests from your own servers.
+</Accordion>
+
+<Accordion title="Block Everything Except Known Clients">
+  Create a strict allowlist by blocking all IPs and whitelisting specific ones:
+
+  ```caddyfile
+  defender block {
+      ranges all
+      whitelist 203.0.113.10 203.0.113.20 198.51.100.5
+  }
+  ```
+
+  Only the three whitelisted IPs can access your site.
+  
+  <Warning>
+  Be careful with `ranges all` - it blocks **all** traffic. Always test with a whitelist that includes your own IP first.
+  </Warning>
+</Accordion>
+
+<Accordion title="Allow Internal Network While Blocking External">
+  Block external cloud providers but allow internal infrastructure:
+
+  ```caddyfile
+  defender drop {
+      ranges aws gcloud azure
+      whitelist 10.0.1.5 10.0.1.6 10.0.2.10  # Internal monitoring
+  }
+  ```
+  
+  <Note>
+  Remember: whitelist only accepts individual IPs, not ranges like `10.0.0.0/8`.
+  </Note>
+</Accordion>
+
+<Accordion title="Development/Testing Environment">
+  Block AI crawlers in production but allow them from your testing IP:
+
+  ```caddyfile
+  defender garbage {
+      ranges openai deepseek githubcopilot
+      whitelist 198.51.100.42  # Your test runner IP
+  }
+  ```
+  
+  This lets you test how your site responds to AI crawlers without actually serving them garbage.
+</Accordion>
+
+## IPv6 Support
+
+The whitelist fully supports both IPv4 and IPv6 addresses:
+
+```caddyfile
+defender block {
+    ranges all
+    whitelist 192.0.2.1 2001:db8::1 2001:db8:85a3::8a2e:370:7334
+}
+```
+
+IPv4-mapped IPv6 addresses are automatically normalized:
+
+**Source Code:** `matchers/ip/ip.go:149-165`
+
+```go
+func ipToAddr(ip net.IP) (netip.Addr, error) {
+    if ip == nil {
+        return netip.Addr{}, fmt.Errorf("ip is nil")
+    }
+
+    addr, ok := netip.AddrFromSlice(ip)
+    if !ok {
+        return netip.Addr{}, fmt.Errorf("invalid IP address")
+    }
+
+    // Normalize IPv4-mapped IPv6 addresses to pure IPv4
+    if addr.Is4In6() {
+        addr = netip.AddrFrom4(addr.As4())
+    }
+
+    return addr, nil
+}
+```
+
+This means `::ffff:192.0.2.1` is treated the same as `192.0.2.1`.
+
+## Performance
+
+Whitelist lookups are extremely fast:
+
+- **Data structure:** Hash map (`map[netip.Addr]struct{}`)
+- **Lookup complexity:** O(1)
+- **Memory overhead:** Minimal - uses empty struct `struct{}{}` as value
+
+Since the whitelist check happens before the BART table lookup, whitelisted IPs experience virtually zero overhead.
+
+## Empty Whitelist
+
+If no whitelist is specified, the middleware works normally:
+
+```go
+Whitelist []string `json:"whitelist,omitempty"`
+```
+
+From `plugin.go:97-100`
+
+An empty whitelist means:
+- No IPs are automatically allowed
+- All IPs go through normal range checking
+- Default behavior (no special exemptions)
+
+## Debugging Whitelist
+
+When debug logging is enabled, you'll see whitelist matches:
+
+```go
+c.log.Debug("IP is whitelisted", zap.String("ip", clientIP.String()))
+```
+
+From `matchers/ip/ip.go:77`
+
+Enable debug logging in Caddy to verify whitelist behavior:
+
+```caddyfile
+{
+    debug
+}
+
+defender block {
+    ranges aws
+    whitelist 52.95.245.1
+}
+```
+
+You'll see log entries when whitelisted IPs are allowed through.
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Start Small" icon="seedling">
+    Begin with a small whitelist and expand as needed. It's easier to add IPs than debug why traffic isn't getting through.
+  </Card>
+  
+  <Card title="Document Your Whitelist" icon="book">
+    Add comments explaining why each IP is whitelisted:
+    ```caddyfile
+    # Production API server
+    whitelist 203.0.113.10
+    # Monitoring service
+    whitelist 198.51.100.5
+    ```
+  </Card>
+  
+  <Card title="Test Before Deploying" icon="vial">
+    Always include your own IP in the whitelist when testing with `ranges all` or broad ranges.
+  </Card>
+  
+  <Card title="Monitor Logs" icon="chart-line">
+    Enable debug logging initially to verify whitelist behavior, then disable it in production for performance.
+  </Card>
+</CardGroup>
+
+<Warning>
+**Critical:** If you lock yourself out by blocking your own IP, you'll need console/shell access to fix the configuration. Always test whitelist configurations carefully.
+</Warning>
+
+## Workaround for Range Whitelisting
+
+Since the whitelist doesn't support CIDR ranges, here's a workaround using custom ranges:
+
+**Instead of whitelisting a range:**
+```caddyfile
+# This DOESN'T work:
+defender block {
+    ranges aws
+    whitelist 10.0.0.0/8  # Not supported!
+}
+```
+
+**Use custom range exclusion:**
+1. Fetch the full AWS range list
+2. Manually remove your subnet
+3. Create a custom range file
+4. Use that instead of the `aws` predefined range
+
+Or use multiple Defender directives with different paths (via Caddy's route directive).
+
+## Integration with Responders
+
+Whitelisting works identically with all responder types:
+
+```caddyfile
+# Works with block
+defender block {
+    ranges openai
+    whitelist 203.0.113.1
+}
+
+# Works with tarpit
+defender tarpit {
+    ranges aws gcloud
+    whitelist 35.247.0.1
+    tarpit_config { timeout 5m }
+}
+
+# Works with redirect
+defender redirect {
+    ranges all
+    whitelist 192.0.2.1
+    url https://example.com/blocked
+}
+```
+
+The whitelist is checked in the middleware layer (`middleware.go:66`), before the responder is invoked, so it works consistently across all responder types.

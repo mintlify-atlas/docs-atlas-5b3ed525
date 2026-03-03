@@ -1,0 +1,374 @@
+---
+title: 'Caddyfile Configuration'
+description: 'Complete guide to configuring Caddy Defender using the Caddyfile directive syntax'
+---
+
+## Directive Syntax
+
+The `defender` directive configures the Caddy Defender plugin to protect your site from AI scrapers, bots, and unwanted traffic. The basic syntax is:
+
+```caddyfile
+defender <responder> {
+    ranges <cidr_or_predefined...>
+    whitelist <ip_addresses...>
+    message <custom_message>
+    status_code <http_status_code>
+    url <redirect_url>
+    serve_ignore
+    tarpit_config {
+        headers {
+            <header_name> <header_value>
+        }
+        content <protocol>://<path>
+        timeout <duration>
+        bytes_per_second <integer>
+        response_code <http_status_code>
+    }
+}
+```
+
+## Responder Types
+
+The `<responder>` argument is **required** and must be one of:
+
+- **`block`** - Returns a `403 Forbidden` response with "Access denied" message
+- **`custom`** - Returns a custom message with configurable status code
+- **`drop`** - Drops the connection immediately (aborts handler)
+- **`garbage`** - Returns random garbage data to pollute AI training
+- **`ratelimit`** - Marks requests for rate limiting (requires [caddy-ratelimit](https://github.com/mholt/caddy-ratelimit))
+- **`redirect`** - Returns a `308 Permanent Redirect` response
+- **`tarpit`** - Streams data at a slow, configurable rate to stall bots
+
+## Configuration Options
+
+### ranges
+
+<ParamField path="ranges" type="string[]" required>
+  Specifies IP ranges to block. Supports both CIDR notation and predefined service keys.
+  
+  **Default:** `["aws", "gcloud", "azurepubliccloud", "openai", "deepseek", "githubcopilot"]`
+  
+  **Examples:**
+  - CIDR: `192.168.1.0/24`, `10.0.0.0/8`
+  - Predefined: `openai`, `aws`, `gcloud`, `vpn`, `tor`
+</ParamField>
+
+```caddyfile
+defender block {
+    ranges openai aws 192.168.1.0/24
+}
+```
+
+### whitelist
+
+<ParamField path="whitelist" type="string[]">
+  IP addresses to exclude from blocking. Only supports individual IP addresses, not ranges.
+  
+  **Default:** `[]`
+</ParamField>
+
+```caddyfile
+defender block {
+    ranges openai
+    whitelist 203.0.113.5 198.51.100.42
+}
+```
+
+<Note>
+  Whitelisted IPs bypass all range checks, even if they fall within blocked ranges.
+</Note>
+
+### message
+
+<ParamField path="message" type="string">
+  Custom response message for the `custom` responder type.
+  
+  **Required when:** Using `custom` responder
+</ParamField>
+
+```caddyfile
+defender custom {
+    ranges openai aws
+    message "Please contact support for API access"
+}
+```
+
+### status_code
+
+<ParamField path="status_code" type="integer">
+  HTTP status code for the `custom` responder type.
+  
+  **Default:** `200`
+  
+  **Valid values:** Any HTTP status code (200, 403, 404, 451, 503, etc.)
+</ParamField>
+
+```caddyfile
+defender custom {
+    ranges vpn
+    message "You don't have permission to access this page"
+    status_code 403
+}
+```
+
+### url
+
+<ParamField path="url" type="string">
+  Redirect URL for the `redirect` responder type.
+  
+  **Required when:** Using `redirect` responder
+</ParamField>
+
+```caddyfile
+defender redirect {
+    ranges openai
+    url https://example.com/blocked
+}
+```
+
+### serve_ignore
+
+<ParamField path="serve_ignore" type="boolean">
+  Serves a robots.txt file with `Disallow: /` directive to discourage crawlers.
+  
+  **Default:** `false`
+  
+  **Note:** This is a flag directive with no arguments.
+</ParamField>
+
+```caddyfile
+defender block {
+    ranges openai aws
+    serve_ignore
+}
+```
+
+### tarpit_config
+
+<ParamField path="tarpit_config" type="object">
+  Configuration for the `tarpit` responder. Controls how data is streamed to slow down bots.
+  
+  **Required when:** Using `tarpit` responder
+</ParamField>
+
+#### tarpit_config.headers
+
+<ParamField path="tarpit_config.headers" type="map[string]string">
+  Custom HTTP headers to include in the tarpit response.
+  
+  **Default:** `{}`
+</ParamField>
+
+```caddyfile
+defender tarpit {
+    ranges openai
+    tarpit_config {
+        headers {
+            Content-Type text/html
+            X-Custom-Header custom-value
+        }
+    }
+}
+```
+
+#### tarpit_config.content
+
+<ParamField path="tarpit_config.content" type="string">
+  Content source for the tarpit response in the format `<protocol>://<path>`.
+  
+  **Supported protocols:**
+  - `file` - Read from a local file
+  - `http` / `https` - Fetch from a URL (cached)
+  - Empty - Hold connection without sending content
+  
+  **Default:** Empty (connection held without content)
+</ParamField>
+
+```caddyfile
+defender tarpit {
+    ranges aws
+    tarpit_config {
+        content file:///var/www/tarpit.html
+    }
+}
+```
+
+```caddyfile
+defender tarpit {
+    ranges gcloud
+    tarpit_config {
+        content https://example.com/large-file.bin
+    }
+}
+```
+
+#### tarpit_config.timeout
+
+<ParamField path="tarpit_config.timeout" type="duration">
+  Maximum duration before forcefully closing the connection.
+  
+  **Default:** `30s`
+  
+  **Format:** Duration string (e.g., `30s`, `5m`, `1h30m`)
+  
+  **Validation:** Must be greater than 0
+</ParamField>
+
+```caddyfile
+defender tarpit {
+    ranges openai
+    tarpit_config {
+        timeout 2m
+    }
+}
+```
+
+#### tarpit_config.bytes_per_second
+
+<ParamField path="tarpit_config.bytes_per_second" type="integer">
+  Number of bytes to stream per second. Lower values slow down bots more effectively.
+  
+  **Default:** `24`
+  
+  **Validation:** Must be greater than 10
+</ParamField>
+
+```caddyfile
+defender tarpit {
+    ranges aws gcloud
+    tarpit_config {
+        bytes_per_second 50
+        timeout 1m
+    }
+}
+```
+
+#### tarpit_config.response_code
+
+<ParamField path="tarpit_config.response_code" type="integer">
+  HTTP response code for the tarpit response.
+  
+  **Default:** `200`
+</ParamField>
+
+```caddyfile
+defender tarpit {
+    ranges openai
+    tarpit_config {
+        response_code 200
+        content file:///var/www/tarpit.html
+    }
+}
+```
+
+## Complete Examples
+
+### Block OpenAI and AWS
+
+```caddyfile
+example.com {
+    defender block {
+        ranges openai aws
+    }
+    respond "Hello World"
+}
+```
+
+### Custom Message with 403 Status
+
+```caddyfile
+example.com {
+    defender custom {
+        ranges openai aws deepseek
+        message "You don't have permission to access this page"
+        status_code 403
+    }
+    respond "Hello World"
+}
+```
+
+### Tarpit Configuration with File Content
+
+```caddyfile
+example.com {
+    defender tarpit {
+        ranges openai aws gcloud
+        tarpit_config {
+            headers {
+                Content-Type text/html
+            }
+            content file:///var/www/tarpit.html
+            timeout 2m
+            bytes_per_second 30
+            response_code 200
+        }
+    }
+    respond "Hello World"
+}
+```
+
+### Redirect with Whitelist
+
+```caddyfile
+example.com {
+    defender redirect {
+        ranges vpn tor
+        whitelist 203.0.113.5
+        url https://example.com/blocked
+    }
+    respond "Hello World"
+}
+```
+
+### Multiple Defenders for Different Strategies
+
+```caddyfile
+example.com {
+    # Rate limit known AI services
+    defender ratelimit {
+        ranges openai deepseek
+    }
+    
+    # Block known bad actors
+    defender block {
+        ranges 192.168.1.0/24 10.0.0.0/8
+    }
+    
+    # Tarpit everything else from cloud providers
+    defender tarpit {
+        ranges aws gcloud azurepubliccloud
+        tarpit_config {
+            timeout 5m
+            bytes_per_second 20
+        }
+    }
+    
+    respond "Hello World"
+}
+```
+
+### Serve robots.txt Disallow
+
+```caddyfile
+example.com {
+    defender block {
+        ranges openai aws gcloud
+        serve_ignore
+    }
+    respond "Hello World"
+}
+```
+
+## Predefined IP Ranges
+
+See the [IP Ranges documentation](/api/ip-ranges/overview) for a complete list of predefined service keys including:
+
+- Cloud providers: `aws`, `gcloud`, `azurepubliccloud`, `oci`, `aliyun`
+- AI services: `openai`, `deepseek`, `githubcopilot`, `mistral`
+- VPN/Privacy: `vpn`, `tor` (requires build-time configuration)
+- CDNs: `cloudflare`, `digitalocean`, `linode`, `vultr`
+- Special: `all`, `private`
+
+## Source Code Reference
+
+The Caddyfile configuration is parsed in `config.go:39-159` (UnmarshalCaddyfile function).

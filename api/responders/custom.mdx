@@ -1,0 +1,227 @@
+---
+title: 'Custom Responder'
+description: 'Returns a custom text response with configurable status code'
+---
+
+The Custom responder allows you to return a personalized message with any HTTP status code, giving you complete control over the response sent to blocked clients.
+
+## Overview
+
+This responder is highly flexible, allowing you to craft specific responses for different scenarios. Whether you want to return a friendly message with 200 OK, pretend the resource doesn't exist with 404, or indicate legal restrictions with 451, the Custom responder handles it all.
+
+## Configuration
+
+<ParamField path="message" type="string" required>
+  The custom text message to return to blocked clients.
+  
+  This field is **required** when using the Custom responder.
+</ParamField>
+
+<ParamField path="status_code" type="number">
+  The HTTP status code to return.
+  
+  Can be any valid HTTP status code (e.g., 200, 403, 404, 451, 503).
+  
+  **Default:** `200`
+</ParamField>
+
+<ParamField path="ranges" type="string[]">
+  IP ranges to target. Can be CIDR notations or predefined service keys.
+  
+  **Default:** `["aws", "azurepubliccloud", "deepseek", "gcloud", "githubcopilot", "openai"]`
+</ParamField>
+
+<ParamField path="whitelist" type="string[]">
+  Optional list of specific IP addresses to exclude from the custom response.
+  
+  **Default:** `[]`
+</ParamField>
+
+## HTTP Response
+
+The Custom responder sets:
+
+<ResponseField name="status" type="number">
+  The configured `status_code` (default: 200)
+</ResponseField>
+
+<ResponseField name="body" type="string">
+  The configured `message` text
+</ResponseField>
+
+<ResponseField name="Content-Type" type="string">
+  text/plain
+</ResponseField>
+
+## Examples
+
+<CodeGroup>
+
+```caddyfile Caddyfile - Default 200 OK
+localhost:8080 {
+    defender custom {
+        ranges openai aws
+        message "Please contact support for API access"
+    }
+    respond "Public content"
+}
+```
+
+```caddyfile Caddyfile - 403 Forbidden
+example.com {
+    defender custom {
+        ranges openai aws deepseek
+        message "You don't have permission to access this API"
+        status_code 403
+    }
+    reverse_proxy localhost:3000
+}
+```
+
+```caddyfile Caddyfile - 404 Stealth Mode
+api.example.com {
+    defender custom {
+        ranges vpn private
+        message "Page not found"
+        status_code 404
+    }
+    respond "API Response"
+}
+```
+
+```caddyfile Caddyfile - 451 Legal Restriction
+example.com {
+    defender custom {
+        ranges 192.168.1.0/24
+        message "This content is not available in your region due to legal restrictions"
+        status_code 451
+    }
+    respond "Content"
+}
+```
+
+```caddyfile Caddyfile - 503 Maintenance
+example.com {
+    defender custom {
+        ranges all
+        message "Service temporarily unavailable for maintenance"
+        status_code 503
+    }
+}
+```
+
+```json JSON Configuration - 403
+{
+  "handler": "defender",
+  "raw_responder": "custom",
+  "message": "You don't have permission to access this page",
+  "status_code": 403,
+  "ranges": ["openai", "aws"]
+}
+```
+
+```json JSON Configuration - 200
+{
+  "handler": "defender",
+  "raw_responder": "custom",
+  "message": "Please contact support for API access",
+  "ranges": ["openai", "aws"]
+}
+```
+
+</CodeGroup>
+
+## Implementation Details
+
+The Custom responder is implemented in `responders/custom.go:20`:
+
+```go
+func (c CustomResponder) ServeHTTP(w http.ResponseWriter, _ *http.Request, _ caddyhttp.Handler) error {
+    // Use default status code if not specified
+    statusCode := c.StatusCode
+    if statusCode == 0 {
+        statusCode = http.StatusOK
+    }
+
+    w.Header().Set("Content-Type", "text/plain")
+    w.WriteHeader(statusCode)
+    _, err := w.Write([]byte(c.Message))
+    return err
+}
+```
+
+## Common Status Codes
+
+| Code | Name | Use Case |
+|------|------|----------|
+| 200 | OK | Polite message without indicating an error |
+| 403 | Forbidden | Explicit access denial |
+| 404 | Not Found | Stealth mode - hide that the resource exists |
+| 451 | Unavailable For Legal Reasons | Geographic or legal restrictions |
+| 503 | Service Unavailable | Maintenance or temporary blocking |
+
+## Use Cases
+
+### Polite Blocking (200 OK)
+Return a friendly message without triggering error handling in client applications:
+
+```caddyfile
+defender custom {
+    ranges openai
+    message "We appreciate your interest! Please visit our API page for official access."
+}
+```
+
+### Stealth Mode (404 Not Found)
+Make scrapers think the content doesn't exist:
+
+```caddyfile
+defender custom {
+    ranges scrapers
+    message "Not Found"
+    status_code 404
+}
+```
+
+### Legal Compliance (451)
+Indicate content is unavailable due to legal reasons:
+
+```caddyfile
+defender custom {
+    ranges eu-region
+    message "Content unavailable in your jurisdiction"
+    status_code 451
+}
+```
+
+### Maintenance Mode (503)
+Temporarily block all traffic during maintenance:
+
+```caddyfile
+defender custom {
+    ranges all
+    message "Scheduled maintenance in progress. Back soon!"
+    status_code 503
+}
+```
+
+## Comparison with Other Responders
+
+- **vs Block**: Custom allows any status code and message, Block is fixed at 403
+- **vs Drop**: Custom sends a proper HTTP response, Drop terminates the connection
+- **vs Redirect**: Custom returns content, Redirect sends clients elsewhere
+- **vs Garbage**: Custom returns meaningful text, Garbage returns random data
+
+## Best Practices
+
+1. **Use 200 for soft blocking** - Avoids triggering retry logic in well-behaved bots
+2. **Use 404 for stealth** - Makes scrapers think content doesn't exist
+3. **Use 403 for explicit denial** - Clear signal that access is intentionally blocked
+4. **Keep messages short** - Reduces bandwidth for blocked requests
+5. **Match status to intent** - Use semantically appropriate HTTP status codes
+
+## Related Documentation
+
+- [Block Responder](/api/responders/block) - Simple 403 blocking
+- [Redirect Responder](/api/responders/redirect) - Send users elsewhere
+- [HTTP Status Codes](https://developer.mozilla.org/en-US/docs/Web/HTTP/Status) - Full list of status codes

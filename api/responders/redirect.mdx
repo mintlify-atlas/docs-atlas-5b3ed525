@@ -1,0 +1,321 @@
+---
+title: 'Redirect Responder'
+description: 'Redirects requests with a 308 Permanent Redirect response'
+---
+
+The Redirect responder sends clients to a different URL using a `308 Permanent Redirect` HTTP status code.
+
+## Overview
+
+This responder is useful when you want to send blocked clients to an alternative location instead of showing an error or blocking them outright. The redirect uses HTTP 308, which preserves the request method and body.
+
+## Configuration
+
+<ParamField path="url" type="string" required>
+  The destination URL to redirect clients to.
+  
+  This field is **required** when using the Redirect responder.
+  
+  Must be a valid URL (absolute or relative).
+</ParamField>
+
+<ParamField path="ranges" type="string[]">
+  IP ranges to redirect. Can be CIDR notations or predefined service keys.
+  
+  **Default:** `["aws", "azurepubliccloud", "deepseek", "gcloud", "githubcopilot", "openai"]`
+</ParamField>
+
+<ParamField path="whitelist" type="string[]">
+  Optional list of specific IP addresses to exclude from redirection.
+  
+  **Default:** `[]`
+</ParamField>
+
+## HTTP Response
+
+<ResponseField name="status" type="number">
+  308 Permanent Redirect
+</ResponseField>
+
+<ResponseField name="Location" type="string">
+  The configured destination URL
+</ResponseField>
+
+## Examples
+
+<CodeGroup>
+
+```caddyfile Caddyfile - Basic Redirect
+localhost:8080 {
+    defender redirect {
+        ranges openai aws
+        url "https://example.com"
+    }
+    respond "Content for humans"
+}
+```
+
+```caddyfile Caddyfile - Redirect to API Docs
+api.example.com {
+    defender redirect {
+        ranges openai deepseek
+        url "https://example.com/api-docs"
+    }
+    reverse_proxy localhost:3000
+}
+```
+
+```caddyfile Caddyfile - Redirect to Information Page
+example.com {
+    defender redirect {
+        ranges scrapers bots
+        url "https://example.com/bot-info"
+    }
+    respond "Main content"
+}
+```
+
+```caddyfile Caddyfile - Full Configuration
+{
+    auto_https off
+    order defender after header
+}
+
+:80 {
+    bind 127.0.0.1 ::1
+    
+    defender redirect {
+        ranges private
+        url "https://example.com"
+    }
+    
+    respond "This is what humans see"
+}
+```
+
+```json JSON Configuration
+{
+  "handler": "defender",
+  "raw_responder": "redirect",
+  "url": "https://example.com",
+  "ranges": ["openai", "aws"]
+}
+```
+
+</CodeGroup>
+
+## Implementation Details
+
+The Redirect responder is implemented in `responders/redirect.go:14`:
+
+```go
+func (r *RedirectResponder) ServeHTTP(w http.ResponseWriter, req *http.Request, _ caddyhttp.Handler) error {
+    http.Redirect(w, req, r.URL, http.StatusPermanentRedirect)
+    return nil
+}
+```
+
+Uses Go's standard `http.Redirect` function with `http.StatusPermanentRedirect` (308).
+
+## HTTP 308 vs Other Redirect Codes
+
+| Code | Name | Method Preserved | Cache Behavior |
+|------|------|------------------|----------------|
+| 301 | Moved Permanently | No (GET/HEAD only) | Cached by browsers |
+| 302 | Found | No (GET/HEAD only) | Not cached |
+| 307 | Temporary Redirect | Yes | Not cached |
+| **308** | **Permanent Redirect** | **Yes** | **Cached by browsers** |
+
+Caddy Defender uses **308** to:
+- Preserve POST/PUT/DELETE methods if used
+- Signal to crawlers this is permanent
+- Allow browser caching of the redirect
+
+## Use Cases
+
+### Redirect to API Documentation
+Send AI scrapers to your API documentation instead of blocking:
+
+```caddyfile
+defender redirect {
+    ranges openai deepseek
+    url "https://example.com/api-documentation"
+}
+```
+
+### Redirect to Contact Form
+Direct potential partners to a contact form:
+
+```caddyfile
+defender redirect {
+    ranges aws gcloud azure
+    url "https://example.com/contact-for-api-access"
+}
+```
+
+### Redirect to Information Page
+Provide information about why access is restricted:
+
+```caddyfile
+defender redirect {
+    ranges all
+    url "https://example.com/access-policy"
+}
+```
+
+### Redirect to Alternative Content
+Send scrapers to a different version of your site:
+
+```caddyfile
+defender redirect {
+    ranges openai
+    url "https://api.example.com/public"
+}
+```
+
+## Redirect URL Options
+
+### Absolute URLs
+```caddyfile
+url "https://example.com/page"
+url "https://different-domain.com"
+```
+
+### Relative URLs
+```caddyfile
+url "/api-docs"
+url "/contact"
+```
+
+### URLs with Query Parameters
+```caddyfile
+url "https://example.com?source=blocked"
+url "/contact?reason=scraper"
+```
+
+## Client Behavior
+
+How different clients handle 308 redirects:
+
+<Tabs>
+  <Tab title="Browsers">
+    - Automatically follow the redirect
+    - Cache the redirect (future requests go directly to new URL)
+    - Preserve request method (POST stays POST)
+  </Tab>
+  
+  <Tab title="curl">
+    ```bash
+    # Follow redirects with -L flag
+    curl -L http://example.com
+    
+    # See redirect without following
+    curl -I http://example.com
+    ```
+  </Tab>
+  
+  <Tab title="HTTP Libraries">
+    - Most libraries follow redirects by default
+    - Some require explicit configuration
+    - Method is preserved in the redirected request
+  </Tab>
+</Tabs>
+
+## Advantages
+
+1. **Informative** - Can direct users to explanation pages
+2. **Professional** - More polite than blocking or dropping
+3. **Flexible** - Can redirect anywhere (docs, contact, etc.)
+4. **SEO-friendly** - Search engines understand 308 redirects
+5. **Preserves method** - POST/PUT/DELETE preserved unlike 301/302
+
+## Disadvantages
+
+1. **Scrapers still consume resources** - They still hit your server first
+2. **May be followed** - Sophisticated scrapers will follow redirects
+3. **Requires destination** - Need to maintain the redirect target
+4. **Cached by browsers** - Hard to change later for same clients
+
+## Comparison with Other Responders
+
+- **vs Block**: Redirect sends users elsewhere, Block denies access
+- **vs Custom**: Redirect changes location, Custom shows a message
+- **vs Drop**: Redirect gives direction, Drop gives nothing
+- **vs Tarpit**: Redirect is immediate, Tarpit deliberately slows down
+
+## When to Use Redirect
+
+**Use Redirect when:**
+- You want to provide alternative resources
+- Directing scrapers to API docs is preferred
+- Professional, polite blocking is desired
+- You have a good destination URL
+
+**Don't use Redirect when:**
+- You want to minimize all scraper interaction
+- The destination doesn't add value
+- Bandwidth conservation is critical
+- You want to hide that blocking is happening
+
+## Best Practices
+
+1. **Redirect to useful content** - API docs, contact forms, policy pages
+2. **Use HTTPS URLs** - Ensure redirect destination is secure
+3. **Monitor redirect destination** - Ensure target URL stays valid
+4. **Consider redirect loops** - Don't create circular redirects
+5. **Test redirect behavior** - Verify clients are redirected correctly
+
+## Testing
+
+Test the Redirect responder:
+
+```bash
+# See the redirect without following
+curl -I http://example.com
+# Should show: HTTP/1.1 308 Permanent Redirect
+# Location: https://example.com
+
+# Follow the redirect
+curl -L http://example.com
+
+# Simulate blocked IP
+curl -I -H "X-Forwarded-For: 20.202.43.67" http://example.com
+```
+
+## Advanced Configuration
+
+### Different Redirects for Different Ranges
+
+```caddyfile
+example.com {
+    # Redirect AI companies to API docs
+    defender redirect {
+        ranges openai deepseek
+        url "https://example.com/api-access"
+    }
+    
+    # Redirect cloud providers to contact form
+    defender redirect {
+        ranges aws gcloud azure
+        url "https://example.com/contact"
+    }
+    
+    respond "Main content"
+}
+```
+
+### Redirect with Whitelist
+
+```caddyfile
+defender redirect {
+    ranges aws
+    whitelist 3.5.140.2 52.94.133.131
+    url "https://example.com/restricted"
+}
+```
+
+## Related Documentation
+
+- [Custom Responder](/api/responders/custom) - Return a message instead of redirecting
+- [Block Responder](/api/responders/block) - Block access with 403
+- [HTTP 308 Status Code](https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/308) - MDN Documentation

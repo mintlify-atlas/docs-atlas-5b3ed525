@@ -1,0 +1,121 @@
+---
+title: 'Block Responder'
+description: 'Immediately blocks requests with a 403 Forbidden response'
+---
+
+The Block responder returns a `403 Forbidden` status code with an "Access denied" message, immediately terminating the request from matching IP ranges.
+
+## Overview
+
+This is the simplest responder type - it sends a standard HTTP 403 response to any client from a blocked IP range. No additional configuration is required beyond specifying which IP ranges to block.
+
+## Configuration
+
+The Block responder requires no additional parameters beyond the standard `ranges` configuration.
+
+<ParamField path="ranges" type="string[]">
+  IP ranges to block. Can be CIDR notations (e.g., `192.168.1.0/24`) or predefined service keys (e.g., `openai`, `aws`, `gcloud`).
+  
+  **Default:** `["aws", "azurepubliccloud", "deepseek", "gcloud", "githubcopilot", "openai"]`
+</ParamField>
+
+<ParamField path="whitelist" type="string[]">
+  Optional list of specific IP addresses to exclude from blocking, even if they match the ranges.
+  
+  **Note:** Only supports individual IP addresses, not CIDR ranges.
+  
+  **Default:** `[]`
+</ParamField>
+
+## HTTP Response
+
+When a client from a blocked range makes a request:
+
+<ResponseField name="status" type="number">
+  403
+</ResponseField>
+
+<ResponseField name="body" type="string">
+  Access denied
+</ResponseField>
+
+<ResponseField name="Content-Type" type="string">
+  text/plain
+</ResponseField>
+
+## Examples
+
+<CodeGroup>
+
+```caddyfile Caddyfile - Basic
+localhost:8080 {
+    defender block {
+        ranges openai aws deepseek
+    }
+    respond "Human-friendly content"
+}
+```
+
+```caddyfile Caddyfile - With Whitelist
+example.com {
+    defender block {
+        ranges aws
+        whitelist 3.5.140.2 52.94.133.131
+    }
+    reverse_proxy localhost:3000
+}
+```
+
+```caddyfile Caddyfile - Multiple Ranges
+api.example.com {
+    defender block {
+        ranges 203.0.113.0/24 192.168.0.0/16 private
+    }
+    respond "API Endpoint"
+}
+```
+
+```json JSON Configuration
+{
+  "handler": "defender",
+  "raw_responder": "block",
+  "ranges": ["openai", "aws", "203.0.113.0/24"],
+  "whitelist": ["3.5.140.2"]
+}
+```
+
+</CodeGroup>
+
+## Implementation Details
+
+The Block responder is implemented in `responders/block.go:12`:
+
+```go
+func (b BlockResponder) ServeHTTP(w http.ResponseWriter, _ *http.Request, _ caddyhttp.Handler) error {
+    w.WriteHeader(http.StatusForbidden)
+    _, err := w.Write([]byte("Access denied"))
+    return err
+}
+```
+
+The response is immediate with no delay or additional processing.
+
+## Use Cases
+
+- **Block AI Scrapers**: Prevent AI companies from scraping your content
+- **Geo-blocking**: Block specific geographic regions (when combined with region-specific ranges)
+- **Known Bad Actors**: Block IPs from known malicious sources
+- **Cloud Provider Restrictions**: Prevent access from specific cloud providers
+
+## Comparison with Other Responders
+
+- **vs Custom**: Block always returns 403, while Custom allows any status code and message
+- **vs Drop**: Block sends a proper HTTP response, while Drop terminates the connection
+- **vs Tarpit**: Block responds immediately, while Tarpit deliberately slows down the response
+- **vs Garbage**: Block returns a clear error, while Garbage returns meaningless data
+
+## Related Documentation
+
+- [Custom Responder](/api/responders/custom) - For customizable status codes and messages
+- [Drop Responder](/api/responders/drop) - For silently dropping connections
+- [IP Ranges Configuration](/api/ip-ranges/overview) - Available predefined ranges

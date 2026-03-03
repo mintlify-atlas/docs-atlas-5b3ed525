@@ -1,0 +1,486 @@
+---
+title: 'Rate Limiting Integration'
+description: 'Configure Caddy Defender to work with caddy-ratelimit for advanced rate limiting based on IP ranges'
+---
+
+## Overview
+
+Caddy Defender's `ratelimit` responder integrates with the [caddy-ratelimit](https://github.com/mholt/caddy-ratelimit) module to apply rate limiting selectively based on IP ranges. This allows you to enforce stricter limits on traffic from cloud providers, VPNs, or other suspicious sources while allowing normal traffic to flow freely.
+
+<Note>
+  **Required:** This feature requires both Caddy Defender and [caddy-ratelimit](https://github.com/mholt/caddy-ratelimit) to be installed.
+</Note>
+
+## How It Works
+
+The `ratelimit` responder uses a simple but effective workflow:
+
+1. **IP Matching:** Defender checks if the client's IP address matches any of the configured ranges
+2. **Header Marking:** If a match is found, Defender sets the `X-RateLimit-Apply` header to `true`
+3. **Request Continuation:** The request continues down the handler chain to caddy-ratelimit
+4. **Rate Limiting:** caddy-ratelimit applies rate limits only to requests with the marked header
+5. **Bypass:** Non-matching requests bypass rate limiting entirely
+
+<Warning>
+  **Handler Order Matters:** Defender must be placed **before** the rate_limit handler in the middleware chain.
+</Warning>
+
+## Configuration
+
+### Caddyfile Syntax
+
+```caddyfile
+defender ratelimit {
+    ranges <cidr_or_predefined...>
+    whitelist <ip_addresses...>
+}
+
+rate_limit {
+    match header X-RateLimit-Apply true
+    rate  <requests-per-second>
+    burst <burst-size>
+    key   <rate-limit-key>
+}
+```
+
+<ParamField path="ranges" type="string[]" required>
+  IP ranges to apply rate limiting. Supports CIDR notation and predefined service keys.
+</ParamField>
+
+<ParamField path="whitelist" type="string[]">
+  IP addresses to exclude from rate limiting.
+</ParamField>
+
+### JSON Configuration
+
+```json
+{
+  "handler": "defender",
+  "raw_responder": "ratelimit",
+  "ranges": ["aws", "gcloud", "10.0.0.0/8"],
+  "whitelist": ["203.0.113.5"]
+}
+```
+
+## Examples
+
+### Basic Rate Limiting
+
+Apply rate limiting to OpenAI and Cloudflare IP ranges:
+
+<CodeGroup>
+```caddyfile Caddyfile
+example.com {
+    defender ratelimit {
+        ranges cloudflare openai
+    }
+
+    rate_limit {
+        match header X-RateLimit-Apply true
+        rate  5r/s
+        burst 10
+        key   {http.request.remote.host}
+    }
+
+    respond "Hello World"
+}
+```
+
+```json JSON
+{
+  "apps": {
+    "http": {
+      "servers": {
+        "srv0": {
+          "routes": [
+            {
+              "handle": [
+                {
+                  "handler": "defender",
+                  "raw_responder": "ratelimit",
+                  "ranges": ["cloudflare", "openai"]
+                },
+                {
+                  "handler": "rate_limit",
+                  "match": {
+                    "header": {
+                      "X-RateLimit-Apply": ["true"]
+                    }
+                  },
+                  "rate": "5r/s",
+                  "burst": 10,
+                  "key": "{http.request.remote.host}"
+                },
+                {
+                  "handler": "static_response",
+                  "body": "Hello World"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+</CodeGroup>
+
+### Advanced API Protection
+
+Protect an API endpoint with different rate limits for different IP ranges:
+
+```caddyfile
+api.example.com {
+    # Rate limit cloud providers more strictly
+    defender ratelimit {
+        ranges aws gcloud azurepubliccloud
+    }
+
+    rate_limit {
+        match header X-RateLimit-Apply true
+        rate  10r/s
+        burst 20
+        key   {http.request.uri.path}
+    }
+
+    reverse_proxy localhost:3000
+}
+```
+
+### Multi-Range Rate Limiting
+
+Apply rate limiting to multiple IP ranges including custom CIDRs:
+
+```caddyfile
+example.com {
+    defender ratelimit {
+        ranges 192.168.1.0/24 10.0.0.0/8 aws vpn
+    }
+
+    rate_limit {
+        match header X-RateLimit-Apply true
+        rate  2r/s
+        burst 5
+        key   {http.request.remote.host}
+    }
+
+    respond "API Content"
+}
+```
+
+### Whitelist Trusted IPs
+
+Exclude specific IPs from rate limiting:
+
+```caddyfile
+example.com {
+    defender ratelimit {
+        ranges openai aws
+        whitelist 203.0.113.5 198.51.100.42
+    }
+
+    rate_limit {
+        match header X-RateLimit-Apply true
+        rate  5r/s
+        burst 10
+        key   {http.request.remote.host}
+    }
+
+    reverse_proxy localhost:8080
+}
+```
+
+### Combining with Other Responders
+
+Use multiple Defender configurations for layered protection:
+
+```caddyfile
+example.com {
+    # Rate limit AI services
+    defender ratelimit {
+        ranges openai deepseek
+    }
+    
+    rate_limit {
+        match header X-RateLimit-Apply true
+        rate 2r/s
+        burst 5
+        key {http.request.remote.host}
+    }
+
+    # Block known bad actors completely
+    defender block {
+        ranges 192.168.1.0/24
+    }
+    
+    # Tarpit suspicious cloud traffic
+    defender tarpit {
+        ranges aws gcloud
+        tarpit_config {
+            timeout 5m
+            bytes_per_second 20
+        }
+    }
+
+    respond "Hello World"
+}
+```
+
+## Rate Limit Configuration Options
+
+When configuring caddy-ratelimit with Defender, use these options:
+
+### match header
+
+<ParamField path="match.header" type="string" required>
+  Match requests with the `X-RateLimit-Apply: true` header set by Defender.
+</ParamField>
+
+```caddyfile
+rate_limit {
+    match header X-RateLimit-Apply true
+}
+```
+
+### rate
+
+<ParamField path="rate" type="string" required>
+  Maximum number of requests per time unit. Format: `<number>r/<unit>`
+  
+  **Units:** `s` (second), `m` (minute), `h` (hour)
+  
+  **Examples:** `5r/s`, `100r/m`, `1000r/h`
+</ParamField>
+
+### burst
+
+<ParamField path="burst" type="integer">
+  Maximum number of requests allowed in a burst before rate limiting kicks in.
+</ParamField>
+
+### key
+
+<ParamField path="key" type="string" required>
+  The key to use for rate limiting. Determines how requests are grouped.
+  
+  **Common values:**
+  - `{http.request.remote.host}` - Rate limit by client IP
+  - `{http.request.uri.path}` - Rate limit by endpoint
+  - `{http.request.header.X-API-Key}` - Rate limit by API key
+</ParamField>
+
+## Use Cases
+
+### Protect API Endpoints from Scraping
+
+Prevent AI services from overwhelming your API:
+
+```caddyfile
+api.example.com {
+    defender ratelimit {
+        ranges openai deepseek githubcopilot mistral
+    }
+
+    rate_limit {
+        match header X-RateLimit-Apply true
+        rate  1r/s
+        burst 3
+        key   {http.request.remote.host}
+    }
+
+    reverse_proxy localhost:8080
+}
+```
+
+### Mitigate Brute Force Attacks
+
+Limit requests from VPN and Tor exit nodes:
+
+```caddyfile
+login.example.com {
+    defender ratelimit {
+        ranges vpn tor
+    }
+
+    rate_limit {
+        match header X-RateLimit-Apply true
+        rate  3r/m
+        burst 5
+        key   {http.request.remote.host}
+    }
+
+    reverse_proxy localhost:3000
+}
+```
+
+### Geographic Rate Limiting
+
+Apply stricter limits to specific cloud regions:
+
+```caddyfile
+example.com {
+    defender ratelimit {
+        ranges aws-us-east-1 aws-us-west-1
+    }
+
+    rate_limit {
+        match header X-RateLimit-Apply true
+        rate  10r/s
+        burst 20
+        key   {http.request.remote.host}
+    }
+
+    respond "Content"
+}
+```
+
+### Internal vs External Traffic
+
+Rate limit external cloud traffic while allowing internal traffic:
+
+```caddyfile
+internal.example.com {
+    # Don't rate limit private IPs
+    defender ratelimit {
+        ranges aws gcloud azurepubliccloud
+    }
+
+    rate_limit {
+        match header X-RateLimit-Apply true
+        rate  5r/s
+        burst 10
+        key   {http.request.remote.host}
+    }
+
+    reverse_proxy localhost:8080
+}
+```
+
+## Troubleshooting
+
+### Verify Headers are Set
+
+Check if Defender is setting the rate limit header:
+
+```bash
+curl -I http://example.com
+```
+
+You should see the header in responses from matching IPs.
+
+### Test Rate Limiting
+
+Simulate requests from a blocked range:
+
+```bash
+# Test from AWS IP (example)
+for i in {1..20}; do
+  curl -H "X-Forwarded-For: 20.202.43.67" http://example.com
+done
+```
+
+### Check Handler Order
+
+Ensure Defender comes before rate_limit:
+
+```caddyfile
+example.com {
+    # ✅ Correct order
+    defender ratelimit { ... }
+    rate_limit { ... }
+    respond "Hello"
+}
+```
+
+```caddyfile
+example.com {
+    # ❌ Wrong order - won't work
+    rate_limit { ... }
+    defender ratelimit { ... }
+    respond "Hello"
+}
+```
+
+### Debug Logs
+
+Enable debug logging to see Defender's IP matching:
+
+```caddyfile
+{
+    debug
+}
+
+example.com {
+    defender ratelimit {
+        ranges openai
+    }
+    respond "Hello"
+}
+```
+
+## Implementation Details
+
+The `ratelimit` responder is implemented in `responders/ratelimit.go:9-18`:
+
+```go
+type RateLimitResponder struct {}
+
+func (r *RateLimitResponder) ServeHTTP(w http.ResponseWriter, req *http.Request, next caddyhttp.Handler) error {
+    req.Header.Set("X-RateLimit-Apply", "true")
+    return next.ServeHTTP(w, req)
+}
+```
+
+When an IP matches the configured ranges, Defender:
+1. Sets the `X-RateLimit-Apply` header to `true`
+2. Passes the request to the next handler (caddy-ratelimit)
+3. Does not modify the response
+
+Non-matching requests continue without the header, bypassing rate limiting.
+
+## Requirements
+
+<Note>
+  **Dependencies:**
+  - [caddy-ratelimit](https://github.com/mholt/caddy-ratelimit) module installed
+  - Caddy Defender v0.5.0 or higher
+</Note>
+
+### Installing caddy-ratelimit
+
+Build Caddy with both modules:
+
+```bash
+xcaddy build \
+  --with github.com/mholt/caddy-ratelimit \
+  --with pkg.jsn.cam/caddy-defender
+```
+
+Or in a Dockerfile:
+
+```dockerfile
+FROM caddy:2-builder AS builder
+
+RUN xcaddy build \
+    --with github.com/mholt/caddy-ratelimit \
+    --with pkg.jsn.cam/caddy-defender
+
+FROM caddy:2
+COPY --from=builder /usr/bin/caddy /usr/bin/caddy
+```
+
+## Best Practices
+
+1. **Start Conservative:** Begin with higher rate limits and adjust based on actual traffic patterns
+2. **Use Whitelist:** Exclude known good IPs from rate limiting
+3. **Monitor Logs:** Watch for legitimate traffic being rate limited
+4. **Combine Strategies:** Use rate limiting for AI services, blocking for malicious IPs
+5. **Test Thoroughly:** Verify rate limits work as expected before deploying to production
+
+## See Also
+
+- [Caddyfile Configuration](/configuration/caddyfile)
+- [JSON Configuration](/configuration/json)
+- [IP Ranges Documentation](/api/ip-ranges/overview)
+- [caddy-ratelimit Documentation](https://github.com/mholt/caddy-ratelimit)

@@ -1,0 +1,250 @@
+---
+title: 'Garbage Responder'
+description: 'Returns random garbage data to confuse scrapers and poison AI training'
+---
+
+The Garbage responder returns 100 lines of randomly generated nonsensical text designed to be difficult for AI models to learn from, effectively polluting training datasets.
+
+## Overview
+
+This responder generates unpredictable, irregular content combining random characters, symbols, and nonsense words. The goal is to waste scraper resources and contaminate AI training data with useless information.
+
+## Configuration
+
+The Garbage responder requires no additional parameters beyond the standard IP ranges configuration.
+
+<ParamField path="ranges" type="string[]">
+  IP ranges that will receive garbage data. Can be CIDR notations or predefined service keys.
+  
+  **Default:** `["aws", "azurepubliccloud", "deepseek", "gcloud", "githubcopilot", "openai"]`
+</ParamField>
+
+<ParamField path="whitelist" type="string[]">
+  Optional list of specific IP addresses to exclude from receiving garbage.
+  
+  **Default:** `[]`
+</ParamField>
+
+<ParamField path="serve_ignore" type="boolean">
+  Whether to serve a robots.txt file with `Disallow: /` directive.
+  
+  **Default:** `false`
+</ParamField>
+
+## HTTP Response
+
+<ResponseField name="status" type="number">
+  200 OK
+</ResponseField>
+
+<ResponseField name="Content-Type" type="string">
+  text/plain
+</ResponseField>
+
+<ResponseField name="body" type="string">
+  100 lines of randomly generated garbage text
+</ResponseField>
+
+## Example Response Body
+
+Each request generates unique random output:
+
+```text
+florb~
+wibble^
+5kJ3@xP9#mL2$nH7%fG1&dB4*aC8(eR6)iT0+
+snark|
+quint}
+F8@aS3#jK9$xM2%nL7&pQ1*vB6(cD4)eR5+yT0-zW8/gH3<uI9>wN2?
+blarg\
+ploosh!
+3L#9K@5J$2M&7N%1P*6Q(4R)8S+0T-5U/9V<2W>7X?1Y\3Z|4A}6B~8C
+zaxor`
+...
+```
+
+## Examples
+
+<CodeGroup>
+
+```caddyfile Caddyfile - Basic
+localhost:8080 {
+    defender garbage {
+        ranges openai aws deepseek
+    }
+    respond "Legitimate content for humans"
+}
+```
+
+```caddyfile Caddyfile - With serve_ignore
+example.com {
+    defender garbage {
+        ranges scrapers bots
+        serve_ignore
+    }
+    respond "Real content"
+}
+```
+
+```caddyfile Caddyfile - Multiple Ranges
+{
+    auto_https off
+    order defender after header
+}
+
+:80 {
+    bind 127.0.0.1 ::1
+    
+    defender garbage {
+        ranges private openai aws
+        serve_ignore
+    }
+    
+    respond "This is what humans see"
+}
+```
+
+```json JSON Configuration
+{
+  "handler": "defender",
+  "raw_responder": "garbage",
+  "ranges": ["openai", "aws", "gcloud"],
+  "serve_ignore": true
+}
+```
+
+</CodeGroup>
+
+## Implementation Details
+
+The Garbage responder is implemented in `responders/garbage.go:15`:
+
+```go
+func (g GarbageResponder) ServeHTTP(w http.ResponseWriter, _ *http.Request, _ caddyhttp.Handler) error {
+    garbage := generateTerribleText(100)
+    w.Header().Set("Content-Type", "text/plain")
+    w.WriteHeader(http.StatusOK)
+    _, err := w.Write([]byte(garbage))
+    return err
+}
+```
+
+### Garbage Generation Algorithm
+
+The garbage generator uses two strategies randomly:
+
+1. **Nonsense Words** - Random selection from a predefined list:
+   - `florb`, `zaxor`, `quint`, `blarg`, `wibble`, `fizzle`, `gronk`, `snark`, `ploosh`, `dribble`
+
+2. **Random Characters** - Random length (10-60 chars) from character set:
+   - Lowercase letters: `a-z`
+   - Uppercase letters: `A-Z`
+   - Numbers: `0-9`
+   - Symbols: `!@#$%^&*()_+-=[]{};':",./<>?\|~`
+
+Each line randomly picks one strategy and adds a random punctuation character at the end.
+
+## Use Cases
+
+### AI Training Poisoning
+Contaminate AI training datasets with useless data:
+
+```caddyfile
+defender garbage {
+    ranges openai deepseek mistral
+}
+```
+
+### Scraper Resource Waste
+Waste bandwidth and storage of automated scrapers:
+
+```caddyfile
+defender garbage {
+    ranges scrapers bots
+}
+```
+
+### Content Protection
+Make automated content harvesting worthless:
+
+```caddyfile
+defender garbage {
+    ranges aws gcloud azure
+}
+```
+
+## Advantages
+
+1. **AI Poisoning** - Degrades quality of training data if scraped
+2. **Unpredictable** - Each response is randomly generated
+3. **Resource Waste** - Scrapers waste bandwidth, storage, and processing
+4. **Looks Valid** - Returns 200 OK so scrapers think they succeeded
+5. **No Blocking Signal** - Scrapers don't know they're being served garbage
+
+## Disadvantages
+
+1. **Bandwidth Cost** - Sends ~5-10KB per request instead of small error
+2. **Processing Overhead** - Generates random data for each request
+3. **Still Allows Access** - Doesn't actually prevent scraping, just poisons it
+4. **May Be Detected** - Sophisticated scrapers might detect random patterns
+
+## Comparison with Other Responders
+
+- **vs Block**: Garbage returns 200 OK with data, Block returns 403 error
+- **vs Drop**: Garbage sends a response, Drop terminates connection
+- **vs Custom**: Garbage returns random data, Custom returns your message
+- **vs Tarpit**: Garbage sends data quickly, Tarpit sends slowly
+
+## When to Use Garbage
+
+**Use Garbage when:**
+- You want to poison AI training datasets
+- Wasting scraper resources is a goal
+- You want scrapers to think they succeeded
+- Content protection is more important than bandwidth
+
+**Don't use Garbage when:**
+- Bandwidth costs are a concern
+- You want to explicitly block access
+- You need to conserve server resources
+- Clear error messages are desired
+
+## Best Practices
+
+1. **Combine with serve_ignore** - Also serve robots.txt to discourage polite bots
+2. **Target AI services specifically** - Use ranges like `openai`, `deepseek`, `mistral`
+3. **Monitor bandwidth** - Garbage uses more bandwidth than error responses
+4. **Consider Tarpit** - For even more resource waste, use Tarpit instead
+5. **Test with whitelist** - Ensure legitimate users aren't getting garbage
+
+## Testing
+
+Test the Garbage responder:
+
+```bash
+# From a blocked IP, you should see garbage
+curl http://example.com
+
+# Each request should return different garbage
+curl http://example.com
+curl http://example.com
+
+# Simulate blocked IP using X-Forwarded-For
+curl -H "X-Forwarded-For: 20.202.43.67" http://example.com
+```
+
+## Ethical Considerations
+
+The Garbage responder is designed to:
+- Protect your content from unauthorized scraping
+- Degrade the quality of AI models trained on scraped data
+- Waste resources of unauthorized scrapers
+
+Consider whether this aligns with your values and legal obligations. Some jurisdictions may have laws about serving misleading content.
+
+## Related Documentation
+
+- [Tarpit Responder](/api/responders/tarpit) - Slow garbage delivery for maximum resource waste
+- [Block Responder](/api/responders/block) - Explicitly deny access instead
+- [Custom Responder](/api/responders/custom) - Return a clear message instead
+- [serve_ignore Configuration](/configuration/caddyfile#serve_ignore) - robots.txt directive

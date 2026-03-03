@@ -1,0 +1,183 @@
+---
+title: 'Redirect Response'
+description: 'Redirect blocked requests to alternative URLs with 308 Permanent Redirect'
+---
+
+## Overview
+
+The `redirect` responder sends a **308 Permanent Redirect** response to matching requests, directing them to a different URL. This is useful for redirecting unwanted traffic away from your site or to honeypot pages.
+
+## Configuration Options
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `url` | Yes | The destination URL for the redirect |
+
+<Info>
+  The `url` field is required when using the redirect responder.
+</Info>
+
+## When to Use
+
+Use the `redirect` responder when:
+- You want to send bots/scrapers to a honeypot or decoy site
+- You need to redirect traffic to an alternative service
+- You want to redirect blocked users to an informational page
+- You want to send AI scrapers to misleading content
+
+## HTTP 308 vs Other Redirects
+
+The `redirect` responder uses **HTTP 308 Permanent Redirect**:
+- Indicates the redirect is permanent (like 301)
+- Guarantees the request method won't change (unlike 301/302)
+- Tells clients to always use the new URL in the future
+- More reliable for POST/PUT requests than 301/302
+
+## Configuration Examples
+
+<Tabs>
+  <Tab title="Caddyfile">
+    ### Example 1: Basic Redirect
+
+    ```caddyfile
+    localhost:8080 {
+        defender redirect {
+            ranges 10.0.0.0/8
+            url "https://example.com"
+        }
+    }
+    ```
+
+    Redirects all requests from the `10.0.0.0/8` range to `https://example.com`.
+
+    ### Example 2: Full Configuration
+
+    ```caddyfile
+    {
+        auto_https off
+        order defender after header
+        debug
+    }
+
+    :80 {
+        bind 127.0.0.1 ::1
+
+        defender redirect {
+            ranges private
+            url "https://example.com"
+        }
+    }
+    ```
+
+    This configuration:
+    - Redirects all private IP ranges to example.com
+    - Useful for testing or internal network management
+    - Runs the defender after header processing
+  </Tab>
+
+  <Tab title="JSON">
+    ### Example 1: Basic Redirect
+
+    ```json
+    {
+        "handler": "defender",
+        "raw_responder": "redirect",
+        "ranges": ["10.0.0.0/8"],
+        "url": "https://example.com"
+    }
+    ```
+
+    ### Example 2: Full Configuration
+
+    ```json
+    {
+        "handler": "defender",
+        "raw_responder": "redirect",
+        "ranges": ["private"],
+        "url": "https://example.com"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Real-World Use Cases
+
+<CodeGroup>
+```caddyfile AI Scraper Honeypot
+api.example.com {
+    defender redirect {
+        ranges openai anthropic
+        url "https://honeypot.example.com/fake-api"
+    }
+    respond "Real API endpoint"
+}
+```
+
+```caddyfile Bot Tarpit Redirect
+website.example.com {
+    defender redirect {
+        ranges aws google-cloud
+        url "https://trap.example.com/infinite-scroll"
+    }
+    file_server
+}
+```
+
+```caddyfile Informational Page
+app.example.com {
+    defender redirect {
+        ranges known-bad-actors
+        url "https://example.com/access-denied"
+    }
+    respond "Application content"
+}
+```
+
+```caddyfile External Service
+oldsite.example.com {
+    defender redirect {
+        ranges 192.168.0.0/16
+        url "https://newsite.example.com"
+    }
+}
+```
+</CodeGroup>
+
+## Response Behavior
+
+When a redirect is triggered:
+- HTTP status code: **308 Permanent Redirect**
+- Location header: Set to the configured URL
+- Response body: Minimal redirect message
+- Connection: Closed after response is sent
+
+<Note>
+  The redirect URL can be any valid HTTP/HTTPS URL, including external domains or specific paths on your own domain.
+</Note>
+
+## Combining with Other Strategies
+
+You can use redirects strategically with other responders:
+
+```caddyfile
+example.com {
+    # Block known bad actors completely
+    defender block {
+        ranges known-bad-actors
+    }
+
+    # Redirect AI scrapers to honeypot
+    defender redirect {
+        ranges openai anthropic
+        url "https://honeypot.example.com"
+    }
+
+    # Serve real content to everyone else
+    file_server
+}
+```
+
+This layered approach:
+1. Blocks the worst offenders immediately
+2. Redirects AI scrapers to misleading content
+3. Serves legitimate content to real users

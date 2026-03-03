@@ -1,0 +1,416 @@
+---
+title: 'Responders'
+description: 'Understanding how Caddy Defender responds to blocked requests with different responder types'
+---
+
+## What are Responders?
+
+Responders determine how Caddy Defender handles requests from blocked IP ranges. Instead of simply blocking all unwanted traffic with a 403 error, you can choose from multiple response strategies to handle bots, scrapers, and AI crawlers in different ways.
+
+Every Defender configuration must specify exactly one responder type. The responder is triggered when a request originates from an IP address that matches your configured ranges and is not whitelisted.
+
+## How Responders Work
+
+When a request arrives, Caddy Defender:
+
+1. Extracts the client IP from the request
+2. Checks if the IP is whitelisted (if so, allows the request)
+3. Checks if the IP matches any configured ranges
+4. If matched, invokes the configured responder
+5. If not matched, passes the request to the next handler
+
+The responder's `ServeHTTP` method is called with full control over the response, allowing each responder type to implement its own behavior.
+
+## Available Responder Types
+
+<CardGroup cols={2}>
+  <Card title="block" icon="ban">
+    Returns a 403 Forbidden response with "Access denied" message. Simple and direct.
+  </Card>
+  
+  <Card title="custom" icon="pen-to-square">
+    Returns a customizable message with configurable status code. Useful for branded error pages.
+  </Card>
+  
+  <Card title="drop" icon="xmark">
+    Immediately drops the connection without sending any response. Appears as a timeout to the client.
+  </Card>
+  
+  <Card title="garbage" icon="trash">
+    Returns random nonsensical data designed to pollute AI training datasets.
+  </Card>
+  
+  <Card title="redirect" icon="arrow-right">
+    Redirects to a specified URL with a 308 Permanent Redirect.
+  </Card>
+  
+  <Card title="ratelimit" icon="gauge-high">
+    Sets a header for rate limiting integration with other Caddy middleware.
+  </Card>
+  
+  <Card title="tarpit" icon="hourglass">
+    Streams data at an extremely slow rate to waste bot resources and time.
+  </Card>
+</CardGroup>
+
+## Responder Details
+
+<Accordion title="block - Simple HTTP 403 Response">
+  The block responder returns a standard HTTP 403 Forbidden status with a plain text "Access denied" message.
+
+  **Source Code:** `responders/block.go:12-16`
+
+  ```go
+  func (b BlockResponder) ServeHTTP(w http.ResponseWriter, _ *http.Request, _ caddyhttp.Handler) error {
+      w.WriteHeader(http.StatusForbidden)
+      _, err := w.Write([]byte("Access denied"))
+      return err
+  }
+  ```
+
+  **When to use:**
+  - You want a straightforward block with standard HTTP semantics
+  - Logging and monitoring tools expect standard 403 responses
+  - You don't need custom messaging
+
+  **Example:**
+  ```caddyfile
+  defender block {
+      ranges openai aws
+  }
+  ```
+</Accordion>
+
+<Accordion title="custom - Configurable Message and Status Code">
+  The custom responder allows you to return a specific message with a custom HTTP status code.
+
+  **Source Code:** `responders/custom.go:20-31`
+
+  ```go
+  func (c CustomResponder) ServeHTTP(w http.ResponseWriter, _ *http.Request, _ caddyhttp.Handler) error {
+      statusCode := c.StatusCode
+      if statusCode == 0 {
+          statusCode = http.StatusOK
+      }
+      w.Header().Set("Content-Type", "text/plain")
+      w.WriteHeader(statusCode)
+      _, err := w.Write([]byte(c.Message))
+      return err
+  }
+  ```
+
+  **Configuration:**
+  - `message` (required): Custom text to return
+  - `status_code` (optional): HTTP status code (default: 200)
+
+  **When to use:**
+  - You want to provide a branded or custom error message
+  - You need to return a specific status code
+  - You want to inform users why they're blocked
+
+  **Examples:**
+  <Tabs>
+    <Tab title="Caddyfile">
+      ```caddyfile
+      defender custom {
+          ranges openai deepseek
+          message "AI crawlers are not permitted on this site."
+          status_code 403
+      }
+      ```
+    </Tab>
+    <Tab title="JSON">
+      ```json
+      {
+        "handler": "defender",
+        "raw_responder": "custom",
+        "ranges": ["openai", "deepseek"],
+        "message": "AI crawlers are not permitted on this site.",
+        "status_code": 403
+      }
+      ```
+    </Tab>
+  </Tabs>
+</Accordion>
+
+<Accordion title="drop - Immediate Connection Termination">
+  The drop responder immediately terminates the connection without sending any response.
+
+  **Source Code:** `responders/drop.go:12-14`
+
+  ```go
+  func (d *DropResponder) ServeHTTP(w http.ResponseWriter, _ *http.Request, _ caddyhttp.Handler) error {
+      panic(http.ErrAbortHandler)
+  }
+  ```
+
+  <Note>
+    This responder uses Go's `http.ErrAbortHandler` to forcefully close the connection. The client will see this as a connection timeout or reset.
+  </Note>
+
+  **When to use:**
+  - You want to give no feedback to blocked clients
+  - You want to simulate server unavailability
+  - You want to minimize server resources spent on responses
+
+  **Example:**
+  ```caddyfile
+  defender drop {
+      ranges tor vpn
+  }
+  ```
+</Accordion>
+
+<Accordion title="garbage - Nonsensical Data Pollution">
+  The garbage responder returns randomly generated nonsensical text designed to be useless for AI training.
+
+  **Source Code:** `responders/garbage.go:15-21`
+
+  ```go
+  func (g GarbageResponder) ServeHTTP(w http.ResponseWriter, _ *http.Request, _ caddyhttp.Handler) error {
+      garbage := generateTerribleText(100)
+      w.Header().Set("Content-Type", "text/plain")
+      w.WriteHeader(http.StatusOK)
+      _, err := w.Write([]byte(garbage))
+      return err
+  }
+  ```
+
+  The garbage generator creates 100 lines of random characters, nonsense words, and unpredictable patterns:
+
+  ```go
+  var (
+      characters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{};':",./<>?\\|`~")
+      nonsenseWords = []string{"florb", "zaxor", "quint", "blarg", "wibble", "fizzle", "gronk", "snark", "ploosh", "dribble"}
+  )
+  ```
+
+  **When to use:**
+  - You want to actively pollute AI training datasets
+  - You want to provide a response but make it useless
+  - You're dealing with aggressive AI scrapers
+
+  <Warning>
+    This responder returns a 200 OK status, making the garbage appear as valid content to scrapers.
+  </Warning>
+
+  **Example:**
+  ```caddyfile
+  defender garbage {
+      ranges openai deepseek githubcopilot
+  }
+  ```
+</Accordion>
+
+<Accordion title="redirect - Permanent URL Redirection">
+  The redirect responder sends a 308 Permanent Redirect to a specified URL.
+
+  **Source Code:** `responders/redirect.go:14-17`
+
+  ```go
+  func (r *RedirectResponder) ServeHTTP(w http.ResponseWriter, req *http.Request, _ caddyhttp.Handler) error {
+      http.Redirect(w, req, r.URL, http.StatusPermanentRedirect)
+      return nil
+  }
+  ```
+
+  **Configuration:**
+  - `url` (required): The destination URL for the redirect
+
+  **When to use:**
+  - You want to redirect bots to a specific page (e.g., terms of service)
+  - You want to redirect to a honeypot or monitoring service
+  - You want to redirect AI crawlers to opt-out instructions
+
+  **Examples:**
+  <Tabs>
+    <Tab title="Caddyfile">
+      ```caddyfile
+      defender redirect {
+          ranges openai
+          url https://example.com/ai-policy
+      }
+      ```
+    </Tab>
+    <Tab title="JSON">
+      ```json
+      {
+        "handler": "defender",
+        "raw_responder": "redirect",
+        "ranges": ["openai"],
+        "url": "https://example.com/ai-policy"
+      }
+      ```
+    </Tab>
+  </Tabs>
+
+  <Note>
+    Uses HTTP 308 (Permanent Redirect) instead of 301 to preserve the HTTP method.
+  </Note>
+</Accordion>
+
+<Accordion title="ratelimit - Rate Limiting Integration">
+  The ratelimit responder sets a header that can be used by other Caddy middleware for rate limiting.
+
+  **Source Code:** `responders/ratelimit.go:12-17`
+
+  ```go
+  func (r *RateLimitResponder) ServeHTTP(w http.ResponseWriter, req *http.Request, next caddyhttp.Handler) error {
+      req.Header.Set("X-RateLimit-Apply", "true")
+      return next.ServeHTTP(w, req)
+  }
+  ```
+
+  <Info>
+    Unlike other responders, the ratelimit responder **continues the request chain** by calling `next.ServeHTTP()`. It marks the request for rate limiting but doesn't block it directly.
+  </Info>
+
+  **When to use:**
+  - You want to rate limit rather than completely block
+  - You're integrating with Caddy rate limiting middleware
+  - You want gradual throttling instead of hard blocking
+
+  **Example:**
+  ```caddyfile
+  defender ratelimit {
+      ranges openai aws
+  }
+  ```
+</Accordion>
+
+<Accordion title="tarpit - Slow Data Streaming">
+  The tarpit responder streams data at an extremely slow rate to waste bot resources and time.
+
+  **Source Code:** `responders/tarpit/tarpit.go:82-151`
+
+  The tarpit responder works by:
+  1. Opening a content reader (file, HTTP, or timeout-based)
+  2. Detecting content type from the first 512 bytes
+  3. Writing small chunks (configurable bytes per second) every 100ms
+  4. Continuing until timeout or content exhausted
+
+  **Configuration:**
+  
+  <CardGroup cols={2}>
+    <Card title="timeout">
+      Duration before closing the connection
+      - Default: `30s`
+      - Example: `5m`, `1h`
+    </Card>
+    
+    <Card title="bytes_per_second">
+      Rate of data streaming
+      - Default: `24`
+      - Minimum: `10`
+    </Card>
+    
+    <Card title="response_code">
+      HTTP status code
+      - Default: `200`
+    </Card>
+    
+    <Card title="content">
+      Content source
+      - Format: `protocol://path`
+      - Protocols: `file`, `http`, `https`
+      - Optional (uses timeout reader if empty)
+    </Card>
+  </CardGroup>
+
+  **Additional Options:**
+  - `headers`: Map of custom response headers
+
+  **When to use:**
+  - You want to waste bot resources and slow them down
+  - You want to make scraping your site impractical
+  - You have high-quality content that aggressive bots are targeting
+
+  <Warning>
+    The tarpit requires more server resources than other responders since connections stay open longer. Monitor your connection limits.
+  </Warning>
+
+  **Examples:**
+  <Tabs>
+    <Tab title="Basic Timeout">
+      ```caddyfile
+      defender tarpit {
+          ranges openai
+          tarpit_config {
+              timeout 1m
+              bytes_per_second 10
+          }
+      }
+      ```
+    </Tab>
+    <Tab title="File Content">
+      ```caddyfile
+      defender tarpit {
+          ranges aws gcloud
+          tarpit_config {
+              content file:///var/www/large-file.bin
+              timeout 5m
+              bytes_per_second 50
+              response_code 200
+          }
+      }
+      ```
+    </Tab>
+    <Tab title="HTTP Content">
+      ```caddyfile
+      defender tarpit {
+          ranges deepseek
+          tarpit_config {
+              content https://example.com/decoy.html
+              timeout 2m
+              bytes_per_second 20
+              headers {
+                  X-Custom-Header "value"
+              }
+          }
+      }
+      ```
+    </Tab>
+    <Tab title="JSON">
+      ```json
+      {
+        "handler": "defender",
+        "raw_responder": "tarpit",
+        "ranges": ["openai"],
+        "tarpit_config": {
+          "timeout": "60s",
+          "bytes_per_second": 24,
+          "response_code": 200,
+          "content": {
+            "protocol": "file",
+            "path": "/var/www/decoy.html"
+          }
+        }
+      }
+      ```
+    </Tab>
+  </Tabs>
+</Accordion>
+
+## Choosing the Right Responder
+
+| Responder | Resource Usage | Stealth | AI Training Pollution | Best For |
+|-----------|---------------|---------|----------------------|----------|
+| `block` | Low | Low | None | Standard blocking |
+| `custom` | Low | Low | None | Branded error pages |
+| `drop` | Minimal | High | None | Silent blocking |
+| `garbage` | Low | Medium | High | Active AI poisoning |
+| `redirect` | Low | Low | None | Policy pages, honeypots |
+| `ratelimit` | Low | Low | None | Gradual throttling |
+| `tarpit` | High | Medium | Medium | Resource exhaustion |
+
+## Implementation Reference
+
+All responders implement this interface from `responders/responder.go:9-12`:
+
+```go
+type Responder interface {
+    ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error
+}
+```
+
+Responder selection happens during configuration unmarshaling in `config.go:171-200`.

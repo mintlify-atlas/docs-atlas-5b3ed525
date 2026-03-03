@@ -1,0 +1,282 @@
+---
+title: "Installation"
+description: "Install Caddy Defender using Docker, xcaddy, or pre-built binaries"
+---
+
+# Installation
+
+Caddy Defender can be installed through multiple methods. Choose the one that best fits your workflow.
+
+## Docker (Recommended)
+
+The easiest way to use Caddy Defender is with the pre-built Docker image.
+
+<Steps>
+  <Step title="Pull the Docker Image">
+    Pull the latest Caddy Defender image from GitHub Container Registry:
+
+    ```bash
+    docker pull ghcr.io/jasonlovesdoggo/caddy-defender:latest
+    ```
+
+    This image includes Caddy with the Defender plugin pre-installed.
+  </Step>
+
+  <Step title="Create a Caddyfile">
+    Create a `Caddyfile` with your configuration. Here's a simple example:
+
+    ```caddyfile
+    localhost:8080 {
+        defender block {
+            ranges openai deepseek
+        }
+        respond "Hello, human!"
+    }
+    ```
+  </Step>
+
+  <Step title="Run the Container">
+    Start Caddy with your configuration:
+
+    ```bash
+    docker run -d \
+      --name caddy \
+      -v /path/to/Caddyfile:/etc/caddy/Caddyfile \
+      -p 80:80 -p 443:443 \
+      ghcr.io/jasonlovesdoggo/caddy-defender:latest
+    ```
+
+    <Warning>
+    Replace `/path/to/Caddyfile` with the actual path to your Caddyfile.
+    </Warning>
+  </Step>
+
+  <Step title="Verify Installation">
+    Check that the container is running:
+
+    ```bash
+    docker ps | grep caddy
+    ```
+
+    Test your endpoint:
+
+    ```bash
+    curl http://localhost:8080
+    ```
+  </Step>
+</Steps>
+
+<Info>
+For production deployments, consider using Docker Compose or Kubernetes for better container orchestration.
+</Info>
+
+## Using xcaddy
+
+Build a custom Caddy binary with the Defender plugin using [xcaddy](https://github.com/caddyserver/xcaddy).
+
+<Steps>
+  <Step title="Install xcaddy">
+    Install xcaddy using Go:
+
+    ```bash
+    go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+    ```
+
+    <Note>
+    Requires Go 1.21 or later. Install Go from [golang.org](https://golang.org/dl/).
+    </Note>
+  </Step>
+
+  <Step title="Build Caddy with Defender Plugin">
+    Build a custom Caddy binary with the Defender plugin:
+
+    ```bash
+    xcaddy build --with pkg.jsn.cam/caddy-defender
+    ```
+
+    This creates a `caddy` binary in your current directory with the Defender plugin included.
+
+    <Tip>
+    You can add multiple plugins in a single build:
+    ```bash
+    xcaddy build \
+      --with pkg.jsn.cam/caddy-defender \
+      --with github.com/mholt/caddy-ratelimit
+    ```
+    </Tip>
+  </Step>
+
+  <Step title="Run Caddy">
+    Use the built binary to run Caddy with your configuration:
+
+    ```bash
+    ./caddy run --config Caddyfile
+    ```
+
+    Or use it as a daemon:
+
+    ```bash
+    ./caddy start --config Caddyfile
+    ```
+  </Step>
+
+  <Step title="Verify the Plugin">
+    Check that the Defender plugin is loaded:
+
+    ```bash
+    ./caddy list-modules | grep defender
+    ```
+
+    You should see:
+    ```
+    http.handlers.defender
+    ```
+  </Step>
+</Steps>
+
+## Download Pre-built Binary
+
+Download Caddy with the Defender plugin pre-installed from the official Caddy download page.
+
+<Steps>
+  <Step title="Visit Caddy Download Page">
+    Go to the Caddy download page with the Defender plugin pre-selected:
+
+    [Download Caddy with Defender Plugin](https://caddyserver.com/download?package=github.com%2Fjasonlovesdoggo%2Fcaddy-defender)
+  </Step>
+
+  <Step title="Select Your Platform">
+    Choose your operating system and architecture from the dropdown menus.
+  </Step>
+
+  <Step title="Download and Extract">
+    Click **Download** and extract the archive:
+
+    <CodeGroup>
+    ```bash Linux/macOS
+    tar -xzf caddy_*.tar.gz
+    chmod +x caddy
+    ```
+
+    ```powershell Windows
+    Expand-Archive caddy_*.zip
+    ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Run Caddy">
+    Run Caddy with your configuration:
+
+    <CodeGroup>
+    ```bash Linux/macOS
+    ./caddy run --config Caddyfile
+    ```
+
+    ```powershell Windows
+    .\caddy.exe run --config Caddyfile
+    ```
+    </CodeGroup>
+  </Step>
+</Steps>
+
+## Verify Installation
+
+Regardless of your installation method, verify that Caddy Defender is working:
+
+<Steps>
+  <Step title="Create a Test Caddyfile">
+    ```caddyfile
+    :2015 {
+        defender block {
+            ranges private
+        }
+        respond "Success! Caddy Defender is working."
+    }
+    ```
+  </Step>
+
+  <Step title="Run Caddy">
+    ```bash
+    caddy run --config Caddyfile
+    ```
+  </Step>
+
+  <Step title="Test from Localhost">
+    Test from localhost (which is in the `private` range):
+
+    ```bash
+    curl http://localhost:2015
+    ```
+
+    You should receive a `403 Forbidden` response, confirming Defender is blocking private IPs.
+  </Step>
+</Steps>
+
+## System Service Installation
+
+For production environments, install Caddy as a system service.
+
+### Linux (systemd)
+
+```bash
+# Copy binary to system path
+sudo cp caddy /usr/bin/
+
+# Create Caddy user
+sudo groupadd --system caddy
+sudo useradd --system --gid caddy --home-dir /var/lib/caddy --shell /usr/sbin/nologin caddy
+
+# Create systemd service
+sudo curl -o /etc/systemd/system/caddy.service \
+  https://raw.githubusercontent.com/caddyserver/dist/master/init/caddy.service
+
+# Reload systemd and start Caddy
+sudo systemctl daemon-reload
+sudo systemctl enable --now caddy
+```
+
+### macOS (launchd)
+
+```bash
+# Copy binary to system path
+sudo cp caddy /usr/local/bin/
+
+# Download and install launchd plist
+sudo curl -o /Library/LaunchDaemons/com.caddyserver.caddy.plist \
+  https://raw.githubusercontent.com/caddyserver/dist/master/init/com.caddyserver.caddy.plist
+
+# Start Caddy service
+sudo launchctl load /Library/LaunchDaemons/com.caddyserver.caddy.plist
+```
+
+## Upgrading
+
+<Tip>
+Regularly update Caddy Defender to get the latest IP ranges and security improvements.
+</Tip>
+
+### Docker
+
+```bash
+docker pull ghcr.io/jasonlovesdoggo/caddy-defender:latest
+docker stop caddy && docker rm caddy
+# Run new container with same configuration
+```
+
+### xcaddy
+
+```bash
+xcaddy build --with pkg.jsn.cam/caddy-defender
+# Replace old binary with new one
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart Guide" icon="rocket" href="/quickstart">
+    Create your first Caddy Defender configuration
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration/caddyfile">
+    Learn about all configuration options
+  </Card>
+</CardGroup>

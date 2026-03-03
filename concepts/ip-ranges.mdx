@@ -1,0 +1,470 @@
+---
+title: 'IP Ranges'
+description: 'Understanding predefined IP ranges and custom CIDR ranges in Caddy Defender'
+---
+
+## Overview
+
+Caddy Defender uses IP ranges to determine which requests to block. You can specify IP ranges in two ways:
+
+1. **Predefined ranges**: Named collections of IPs for popular cloud providers, AI services, and networks
+2. **Custom CIDR ranges**: Manual CIDR notation for specific IP blocks
+
+Ranges are configured via the `ranges` directive and can be mixed together in any combination.
+
+## Default Ranges
+
+If you don't specify any ranges, Caddy Defender uses these defaults:
+
+```go
+DefaultRanges = []string{"aws", "gcloud", "azurepubliccloud", "openai", "deepseek", "githubcopilot"}
+```
+
+From `plugin.go:27`
+
+<Info>
+These defaults are designed to block common AI scrapers and cloud provider IPs by default. Explicitly specify `ranges` to override this behavior.
+</Info>
+
+## How IP Matching Works
+
+When a request arrives, Caddy Defender:
+
+1. **Extracts the client IP** from the request's `RemoteAddr`
+2. **Checks the whitelist** - if the IP is whitelisted, the request is immediately allowed
+3. **Checks blocked ranges** - looks up the IP in a BART table containing all configured ranges
+4. **Uses caching** - IP lookup results are cached for 10 minutes for performance
+5. **Handles IPv4-mapped IPv6** - automatically normalizes IPv4 addresses in IPv6 format
+
+**Source Code:** `matchers/ip/ip.go:65-82`
+
+```go
+func (c *IPChecker) ReqAllowed(ctx context.Context, clientIP net.IP) bool {
+    ipAddr, err := ipToAddr(clientIP)
+    if err != nil {
+        c.log.Warn("Invalid IP address format",
+            zap.String("ip", clientIP.String()),
+            zap.Error(err))
+        return false
+    }
+
+    // Check if the IP is whitelisted
+    if ok, _ := c.whitelist.Matches(ipAddr); ok {
+        c.log.Debug("IP is whitelisted", zap.String("ip", clientIP.String()))
+        return true
+    }
+    // Check if the IP is in the blocked ranges
+    return !c.IPInRanges(ctx, ipAddr)
+}
+```
+
+The IP lookup uses the high-performance [BART (Binary Address Routing Table)](https://github.com/gaissmai/bart) for efficient prefix matching.
+
+## Predefined Ranges
+
+Predefined ranges are automatically fetched and embedded at build time. They're stored in `ranges/data/generated.go` and updated by running the generator in `ranges/main.go`.
+
+### Cloud Providers
+
+<CardGroup cols={2}>
+  <Card title="AWS" icon="aws">
+    **Key:** `aws`
+    
+    Global Amazon Web Services IP ranges across all regions and services.
+    
+    **Source:** AWS IP ranges API
+  </Card>
+  
+  <Card title="Google Cloud" icon="google">
+    **Key:** `gcloud`
+    
+    Google Cloud Platform IP ranges globally.
+    
+    **Source:** Google Cloud JSON feeds
+  </Card>
+  
+  <Card title="Azure" icon="microsoft">
+    **Key:** `azurepubliccloud`
+    
+    Microsoft Azure public cloud IP ranges.
+    
+    **Source:** Azure service tags
+  </Card>
+  
+  <Card title="Cloudflare" icon="cloudflare">
+    **Key:** `cloudflare`
+    
+    Cloudflare edge network IPs.
+  </Card>
+  
+  <Card title="DigitalOcean" icon="digital-ocean">
+    **Key:** `digitalocean`
+    
+    DigitalOcean cloud infrastructure IPs.
+  </Card>
+  
+  <Card title="Linode" icon="server">
+    **Key:** `linode`
+    
+    Linode/Akamai cloud IPs.
+  </Card>
+  
+  <Card title="Oracle Cloud" icon="cloud">
+    **Key:** `oracle`
+    
+    Oracle Cloud Infrastructure IPs.
+  </Card>
+  
+  <Card title="Vultr" icon="server">
+    **Key:** `vultr`
+    
+    Vultr cloud hosting IPs.
+  </Card>
+  
+  <Card title="Alibaba Cloud" icon="cloud">
+    **Key:** `aliyun`
+    
+    Alibaba Cloud (Aliyun) IP ranges.
+  </Card>
+  
+  <Card title="Huawei Cloud" icon="cloud">
+    **Key:** `huawei`
+    
+    Huawei Cloud IP ranges.
+  </Card>
+</CardGroup>
+
+### AI Services
+
+<CardGroup cols={2}>
+  <Card title="OpenAI" icon="robot">
+    **Key:** `openai`
+    
+    OpenAI services including ChatGPT, GPTBot, and SearchBot.
+    
+    **Source:** `openai.com/searchbot.json`, `chatgpt-user.json`, `gptbot.json`
+    
+    From `ranges/fetchers/openai.go:20-36`
+  </Card>
+  
+  <Card title="DeepSeek" icon="brain">
+    **Key:** `deepseek`
+    
+    DeepSeek AI crawler IP ranges.
+  </Card>
+  
+  <Card title="Mistral AI" icon="sparkles">
+    **Key:** `mistral`
+    
+    Mistral AI service IPs.
+  </Card>
+  
+  <Card title="GitHub Copilot" icon="github">
+    **Key:** `githubcopilot`
+    
+    GitHub Copilot service IPs from GitHub's meta API.
+    
+    **Source:** `api.github.com/meta`
+    
+    From `ranges/fetchers/github.go:23-24`
+  </Card>
+</CardGroup>
+
+### Network Types
+
+<CardGroup cols={2}>
+  <Card title="Tor Exit Nodes" icon="user-secret">
+    **Key:** `tor`
+    
+    Known Tor exit node IP addresses.
+    
+    **Source:** CDN-hosted Tor exit list (CSV format)
+    
+    Converts individual IPs to /32 (IPv4) or /128 (IPv6) CIDR notation.
+    
+    From `ranges/fetchers/tor.go:23-24`
+  </Card>
+  
+  <Card title="VPN Services" icon="shield">
+    **Key:** `vpn`
+    
+    Known VPN service provider IP ranges.
+    
+    **Source:** Community-maintained VPN IP list
+    
+    From `ranges/fetchers/vpn.go:22`
+  </Card>
+  
+  <Card title="Private Networks" icon="network-wired">
+    **Key:** `private`
+    
+    RFC 1918 private network ranges:
+    - `127.0.0.0/8` (loopback)
+    - `::1/128` (IPv6 loopback)
+    - `10.0.0.0/8`
+    - `172.16.0.0/12`
+    - `192.168.0.0/16`
+    - `fd00::/8` (IPv6 private)
+    
+    From `ranges/fetchers/private.go:13-20`
+  </Card>
+  
+  <Card title="All IPs" icon="globe">
+    **Key:** `all`
+    
+    Every IP address in existence:
+    - `0.0.0.0/0` (all IPv4)
+    - `::/0` (all IPv6)
+    
+    <Warning>Blocks **all traffic**. Only use with whitelist.</Warning>
+    
+    From `ranges/fetchers/all.go:12-16`
+  </Card>
+</CardGroup>
+
+## Custom CIDR Ranges
+
+You can specify custom IP ranges using standard CIDR notation alongside predefined ranges.
+
+### CIDR Validation
+
+Custom CIDR ranges are validated during configuration:
+
+**Source Code:** `config.go:228-240`
+
+```go
+for _, ipRange := range m.Ranges {
+    // Check if the range is a predefined key (e.g., "openai")
+    if _, ok := data.IPRanges[ipRange]; ok {
+        // If it's a predefined key, skip CIDR validation
+        continue
+    }
+
+    // Otherwise, treat it as a custom CIDR and validate it
+    _, _, err := net.ParseCIDR(ipRange)
+    if err != nil {
+        return fmt.Errorf("invalid IP range %q: %v", ipRange, err)
+    }
+}
+```
+
+### Examples
+
+<Tabs>
+  <Tab title="Caddyfile">
+    ```caddyfile
+    # Mix predefined and custom ranges
+    defender block {
+        ranges openai 203.0.113.0/24 198.51.100.0/24
+    }
+
+    # Block specific subnet
+    defender drop {
+        ranges 10.20.30.0/24
+    }
+
+    # IPv6 support
+    defender block {
+        ranges 2001:db8::/32
+    }
+
+    # Combine multiple types
+    defender tarpit {
+        ranges aws gcloud 192.0.2.0/24 2001:db8::/48
+        tarpit_config {
+            timeout 5m
+        }
+    }
+    ```
+  </Tab>
+  <Tab title="JSON">
+    ```json
+    {
+      "handler": "defender",
+      "raw_responder": "block",
+      "ranges": [
+        "openai",
+        "203.0.113.0/24",
+        "198.51.100.0/24"
+      ]
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## ASN-Based Blocking
+
+You can block entire Autonomous System Numbers (ASNs) using the ASN fetcher:
+
+**Source Code:** `ranges/fetchers/asn.go:24-62`
+
+```go
+func (f ASNFetcher) FetchIPRanges() ([]string, error) {
+    if len(f.ASNs) == 0 {
+        return nil, fmt.Errorf("no ASNs provided to fetch")
+    }
+
+    ipRanges := make([]string, 0)
+
+    for _, asn := range f.ASNs {
+        url := fmt.Sprintf("https://api.hackertarget.com/aslookup/?q=%s", asn)
+        // ... fetches IP ranges for the ASN
+    }
+    return ipRanges, nil
+}
+```
+
+<Note>
+ASN blocking requires creating a custom fetcher. It's not available as a predefined range key because ASNs must be specified individually.
+</Note>
+
+**ASN Format:** Must start with `AS` followed by the number (e.g., `AS15169` for Google).
+
+## Regional Cloud Blocking
+
+Some cloud providers support region-specific blocking:
+
+### AWS Regions
+
+```go
+// Available in ranges/fetchers/aws/
+type AWSRegionFetcher struct {
+    Region  string // e.g., "us-east-1"
+    Service string // e.g., "EC2", "S3" (optional)
+}
+```
+
+This allows you to create custom fetchers for specific AWS regions or services, though the default `aws` key fetches all global ranges.
+
+## Range Storage and Updates
+
+Predefined ranges are:
+
+1. **Fetched at build time** by running `go run ranges/main.go`
+2. **Embedded in the binary** at `ranges/data/generated.go`
+3. **Loaded into memory** as a map during plugin initialization
+4. **Expanded into a BART table** for efficient lookups
+
+From `ranges/data/generated.go:5`:
+
+```go
+var IPRanges = map[string][]string{
+    "aliyun": {
+        "5.181.224.0/23",
+        "8.208.0.0/16",
+        // ... thousands of ranges
+    },
+    "aws": { /* ... */ },
+    "openai": { /* ... */ },
+    // ...
+}
+```
+
+<Info>
+To update predefined ranges, rebuild the plugin after running the range generator. This ensures you have the latest IP ranges from all providers.
+</Info>
+
+## Performance Considerations
+
+### BART Table Indexing
+
+Ranges are loaded into a BART (Binary Address Routing Table) for O(log n) lookup performance:
+
+**Source Code:** `matchers/ip/ip.go:99-121`
+
+```go
+func buildTable(cidrRanges []string, log *zap.Logger) *bart.Table[struct{}] {
+    table := &bart.Table[struct{}]{}
+    for _, cidr := range cidrRanges {
+        if ranges, ok := data.IPRanges[cidr]; ok {
+            for _, predefinedCIDR := range ranges {
+                if err := insertCIDR(table, predefinedCIDR); err != nil {
+                    log.Warn("Invalid predefined CIDR",
+                        zap.String("group", cidr),
+                        zap.String("cidr", predefinedCIDR),
+                        zap.Error(err))
+                }
+            }
+            continue
+        }
+        // Handle custom CIDR
+        if err := insertCIDR(table, cidr); err != nil {
+            log.Warn("Invalid CIDR specification",
+                zap.String("cidr", cidr),
+                zap.Error(err))
+        }
+    }
+    return table
+}
+```
+
+### Caching
+
+IP lookups are cached using [sturdyc](https://github.com/viccon/sturdyc) with:
+- **Capacity:** 10,000 entries
+- **TTL:** 10 minutes
+- **Sharding:** 10 shards for concurrency
+- **Early refresh:** Prevents thundering herd
+
+From `matchers/ip/ip.go:26-34`
+
+### IPv4-Mapped IPv6
+
+The system automatically handles IPv4 addresses in IPv6 format:
+
+```go
+func insertCIDR(table *bart.Table[struct{}], cidr string) error {
+    prefix, err := netip.ParsePrefix(cidr)
+    if err != nil {
+        return fmt.Errorf("invalid CIDR: %w", err)
+    }
+
+    table.Insert(prefix.Masked(), struct{}{})
+
+    // If IPv4 CIDR, also insert as IPv4-mapped IPv6
+    if prefix.Addr().Is4() {
+        ipv4 := prefix.Addr().As4()
+        ipv6Bytes := [16]byte{
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff,
+            ipv4[0], ipv4[1], ipv4[2], ipv4[3],
+        }
+        ipv6Prefix := netip.PrefixFrom(
+            netip.AddrFrom16(ipv6Bytes),
+            96+prefix.Bits(),
+        )
+        table.Insert(ipv6Prefix.Masked(), struct{}{})
+    }
+    return nil
+}
+```
+
+From `matchers/ip/ip.go:123-147`
+
+## Complete Range List
+
+Available predefined range keys:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `all` | Special | All IPv4 and IPv6 addresses |
+| `aliyun` | Cloud | Alibaba Cloud |
+| `aws` | Cloud | Amazon Web Services (global) |
+| `azurepubliccloud` | Cloud | Microsoft Azure |
+| `cloudflare` | Cloud | Cloudflare network |
+| `deepseek` | AI | DeepSeek AI |
+| `digitalocean` | Cloud | DigitalOcean |
+| `gcloud` | Cloud | Google Cloud Platform |
+| `githubcopilot` | AI | GitHub Copilot |
+| `huawei` | Cloud | Huawei Cloud |
+| `linode` | Cloud | Linode/Akamai |
+| `mistral` | AI | Mistral AI |
+| `openai` | AI | OpenAI (GPTBot, ChatGPT, SearchBot) |
+| `oracle` | Cloud | Oracle Cloud |
+| `private` | Network | RFC 1918 private networks |
+| `tor` | Network | Tor exit nodes |
+| `vpn` | Network | Known VPN services |
+| `vultr` | Cloud | Vultr hosting |
+
+<Info>
+Source: All fetchers in `ranges/fetchers/` directory
+</Info>

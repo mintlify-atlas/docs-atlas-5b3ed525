@@ -1,0 +1,223 @@
+---
+title: 'Tarpit Response'
+description: 'Stream data at a slow, configurable rate to stall bots and pollute AI training'
+---
+
+## Overview
+
+The `tarpit` responder streams data to clients at an extremely slow rate, effectively trapping them in a time-consuming connection. This wastes bot resources, stalls scrapers, and can pollute AI training datasets when combined with custom content.
+
+## Configuration Options
+
+| Option | Required | Default | Description |
+|--------|----------|---------|-------------|
+| `headers` | No | - | Custom HTTP headers to include in the response |
+| `content` | No | Random data | Content source (file:// or https://) |
+| `timeout` | No | 30s | Maximum duration before ending the connection |
+| `bytes_per_second` | No | 24 | Rate at which data is streamed |
+| `response_code` | No | 200 | HTTP status code to return |
+
+<Info>
+  The `tarpit_config` block is required when using the tarpit responder.
+</Info>
+
+## When to Use
+
+Use the `tarpit` responder when:
+- You want to waste bot/scraper resources with slow responses
+- You want to tie up bot connections for extended periods
+- You want to pollute AI training with specific misleading content
+- You want to make scraping your site extremely expensive and slow
+
+## How It Works
+
+1. A request from a matching IP range is received
+2. The server responds with headers immediately (appears to be working)
+3. Data is streamed at the configured slow rate (default: 24 bytes/second)
+4. The connection remains open until timeout or content EOF
+5. Bot resources are tied up for the entire duration
+
+## Configuration Examples
+
+<Tabs>
+  <Tab title="Caddyfile">
+    ### Example 1: Basic Tarpit with Local File
+
+    ```caddyfile
+    localhost:8080 {
+        defender tarpit {
+            ranges private
+            tarpit_config {
+                # Optional headers
+                headers {
+                    X-You-Got Played
+                }
+                # Optional. Use content from local file to stream slowly
+                content file://some-file.txt
+                # Optional. Complete request at this duration if content EOF is not reached. Default 30s
+                timeout 30s
+                # Optional. Rate of data stream. Default 24
+                bytes_per_second 24
+                # Optional. HTTP Response Code Default 200
+                response_code 200
+            }
+        }
+    }
+    ```
+
+    This configuration:
+    - Serves content from a local file at 24 bytes/second
+    - Adds a custom header to the response
+    - Times out after 30 seconds if the file hasn't finished streaming
+    - Returns HTTP 200 to appear legitimate
+
+    ### Example 2: Tarpit with Remote Content
+
+    ```caddyfile
+    {
+        auto_https off
+        order defender after header
+        debug
+    }
+
+    :80 {
+        bind 127.0.0.1 ::1
+
+        defender tarpit {
+            ranges private
+            tarpit_config {
+                # Optional headers
+                headers {
+                    X-You-Got "Played"
+                }
+                # Fetch content from remote source (cached locally)
+                content https://www.cloudflare.com/robots.txt
+                # Complete request at this duration if content EOF is not reached
+                timeout 30s
+                # Rate of data stream
+                bytes_per_second 24
+                # HTTP Response Code
+                response_code 200
+            }
+        }
+    }
+    ```
+
+    This example:
+    - Fetches content from a remote HTTPS source (cached locally)
+    - Streams Cloudflare's robots.txt at a glacial pace
+    - Can be used to feed misleading content to AI scrapers
+  </Tab>
+
+  <Tab title="JSON">
+    ### Example 1: Basic Tarpit with Local File
+
+    ```json
+    {
+        "handler": "defender",
+        "raw_responder": "tarpit",
+        "ranges": ["10.0.0.0/8"],
+        "tarpit_config": {
+            "headers": {
+                "X-You-Got": "Played"
+            },
+            "content": "file://some-file.txt",
+            "timeout": "30s",
+            "bytes_per_second": 24,
+            "response_code": 200
+        }
+    }
+    ```
+
+    ### Example 2: Tarpit with Remote Content
+
+    ```json
+    {
+        "handler": "defender",
+        "raw_responder": "tarpit",
+        "ranges": ["private"],
+        "tarpit_config": {
+            "headers": {
+                "X-You-Got": "Played"
+            },
+            "content": "https://www.cloudflare.com/robots.txt",
+            "timeout": "30s",
+            "bytes_per_second": 24,
+            "response_code": 200
+        }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Real-World Scenarios
+
+<CodeGroup>
+```caddyfile AI Training Pollution
+api.example.com {
+    defender tarpit {
+        ranges openai anthropic
+        tarpit_config {
+            content file://fake-data.json
+            bytes_per_second 10
+            timeout 60s
+            response_code 200
+        }
+    }
+    respond "Real API response"
+}
+```
+
+```caddyfile Aggressive Bot Defense
+website.example.com {
+    defender tarpit {
+        ranges aws google-cloud
+        tarpit_config {
+            content https://example.com/honeypot.html
+            bytes_per_second 5
+            timeout 120s
+            headers {
+                Cache-Control "no-cache"
+            }
+        }
+    }
+    file_server
+}
+```
+
+```caddyfile Minimal Resource Usage
+app.example.com {
+    defender tarpit {
+        ranges known-scrapers
+        tarpit_config {
+            # No content specified - random data will be generated
+            bytes_per_second 1
+            timeout 300s
+            response_code 200
+        }
+    }
+}
+```
+</CodeGroup>
+
+## Performance Considerations
+
+<Note>
+  Each tarpit connection consumes server resources for the entire timeout duration. Monitor your server capacity and adjust the timeout and bytes_per_second values accordingly.
+</Note>
+
+### Recommended Settings
+
+- **Light defense**: `bytes_per_second: 100`, `timeout: 10s`
+- **Medium defense**: `bytes_per_second: 24`, `timeout: 30s` (default)
+- **Aggressive defense**: `bytes_per_second: 5`, `timeout: 120s`
+- **Maximum annoyance**: `bytes_per_second: 1`, `timeout: 300s`
+
+## Content Sources
+
+The `content` field supports multiple source types:
+
+- **Local files**: `file:///path/to/file.txt`
+- **HTTPS URLs**: `https://example.com/content.txt` (cached locally)
+- **HTTP URLs**: `http://example.com/content.txt` (cached locally)
+- **Omitted**: Random garbage data is generated

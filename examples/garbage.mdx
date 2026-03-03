@@ -1,0 +1,144 @@
+---
+title: 'Garbage Data Response'
+description: 'Return random garbage data to confuse scrapers and pollute AI training datasets'
+---
+
+## Overview
+
+The `garbage` responder returns meaningless, random data to waste the resources of bots, scrapers, and AI crawlers. This approach not only blocks unwanted traffic but actively pollutes their training data.
+
+<Info>
+  The `garbage` responder requires no additional configuration beyond specifying the IP ranges.
+</Info>
+
+## When to Use
+
+Use the `garbage` responder when:
+- You want to pollute AI training datasets with meaningless data
+- You want to waste scraper resources and make scraping expensive
+- You want to confuse automated tools analyzing your content
+- You prefer an offensive approach rather than just blocking
+
+## How It Works
+
+When a request matches the specified ranges:
+1. The server returns a 200 OK status code (appears successful)
+2. Random garbage data is generated and sent as the response body
+3. The scraper/bot wastes resources processing meaningless content
+4. If used for AI training, the garbage data pollutes their dataset
+
+## Configuration Examples
+
+<Tabs>
+  <Tab title="Caddyfile">
+    ### Example 1: Basic Garbage Response
+
+    ```caddyfile
+    localhost:8080 {
+        defender garbage {
+            ranges 192.168.0.0/24
+        }
+        respond "Legitimate content"
+    }
+    ```
+
+    Returns random garbage data to requests from the `192.168.0.0/24` range while serving legitimate content to others.
+
+    ### Example 2: Garbage with serve_ignore
+
+    ```caddyfile
+    {
+        auto_https off
+        order defender after header
+        debug
+    }
+
+    :80 {
+        bind 127.0.0.1 ::1
+
+        defender garbage {
+            ranges private
+            serve_ignore
+        }
+        respond "This is what a human sees"
+    }
+
+    :83 {
+        bind 127.0.0.1 ::1
+
+        respond "Clear text HTTP"
+    }
+    ```
+
+    The `serve_ignore` flag ensures that after serving garbage, the request is not passed to other handlers.
+  </Tab>
+
+  <Tab title="JSON">
+    ### Example 1: Basic Garbage Response
+
+    ```json
+    {
+        "handler": "defender",
+        "raw_responder": "garbage",
+        "ranges": ["192.168.0.0/24"]
+    }
+    ```
+
+    ### Example 2: Garbage with serve_ignore
+
+    ```json
+    {
+        "handler": "defender",
+        "raw_responder": "garbage",
+        "ranges": ["private"],
+        "serve_ignore": true
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Real-World Use Cases
+
+<CodeGroup>
+```caddyfile AI Scrapers
+api.example.com {
+    defender garbage {
+        ranges openai anthropic google
+    }
+    respond "API endpoint for legitimate users"
+}
+```
+
+```caddyfile Content Scrapers
+blog.example.com {
+    defender garbage {
+        ranges known-scrapers aws
+        serve_ignore
+    }
+    file_server {
+        root /var/www/blog
+    }
+}
+```
+
+```caddyfile Private Networks
+intranet.example.com {
+    defender garbage {
+        ranges private
+    }
+    respond "Internal company resources"
+}
+```
+</CodeGroup>
+
+## Response Behavior
+
+When garbage data is served:
+- HTTP status code: **200 OK** (appears successful)
+- Response body: Random, meaningless data
+- Content-Type: Not specified (varies)
+- Connection: Closed after response is sent
+
+<Note>
+  The garbage response is designed to appear legitimate to automated tools while being completely useless. This makes it harder for bots to detect that they're being blocked.
+</Note>

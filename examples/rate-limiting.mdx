@@ -1,0 +1,293 @@
+---
+title: 'Rate Limiting'
+description: 'Integrate with caddy-ratelimit to mark requests for rate limiting'
+---
+
+## Overview
+
+The `ratelimit` responder marks requests from specific IP ranges for rate limiting, integrating seamlessly with the [caddy-ratelimit](https://github.com/mholt/caddy-ratelimit) module. This allows you to apply different rate limits to different IP ranges.
+
+<Info>
+  The `ratelimit` responder requires the [caddy-ratelimit](https://github.com/mholt/caddy-ratelimit) module to be installed and configured.
+</Info>
+
+## When to Use
+
+Use the `ratelimit` responder when:
+- You want to slow down, not block, specific IP ranges
+- You need different rate limits for different traffic sources
+- You want to throttle AI scrapers or bot traffic
+- You want to protect APIs from abuse while allowing limited access
+
+## How It Works
+
+1. Caddy Defender marks requests from specified ranges
+2. The mark is detected by caddy-ratelimit via a header or matcher
+3. caddy-ratelimit applies the configured rate limit rules
+4. Requests exceeding the limit receive appropriate responses
+
+## Configuration Example
+
+<Tabs>
+  <Tab title="Caddyfile">
+    ```caddyfile
+    {
+        order rate_limit after basic_auth
+    }
+
+    :80 {
+        defender ratelimit {
+            ranges private
+        }
+
+        rate_limit {
+            zone static_example {
+                match {
+                    method GET
+                    header X-RateLimit-Apply true
+                }
+                key {remote_host}
+                events 3
+                window 1m
+            }
+        }
+
+        respond "Hey I'm behind a rate limit!"
+    }
+    ```
+
+    This configuration:
+    - Marks requests from private IP ranges for rate limiting
+    - Applies a rate limit of 3 requests per minute
+    - Uses the remote host as the rate limit key
+    - Only applies to GET requests with the X-RateLimit-Apply header
+  </Tab>
+
+  <Tab title="JSON">
+    ```json
+    {
+        "apps": {
+            "http": {
+                "servers": {
+                    "srv0": {
+                        "listen": [":80"],
+                        "routes": [
+                            {
+                                "handle": [
+                                    {
+                                        "handler": "defender",
+                                        "raw_responder": "ratelimit",
+                                        "ranges": ["private"]
+                                    },
+                                    {
+                                        "handler": "rate_limit",
+                                        "zones": [
+                                            {
+                                                "name": "static_example",
+                                                "match": {
+                                                    "method": ["GET"],
+                                                    "header": {
+                                                        "X-RateLimit-Apply": ["true"]
+                                                    }
+                                                },
+                                                "key": "{remote_host}",
+                                                "events": 3,
+                                                "window": "1m"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Rate Limit Configuration
+
+The `rate_limit` block supports several configuration options:
+
+| Option | Description | Example |
+|--------|-------------|----------|
+| `zone` | Named rate limit zone | `zone api_limit { ... }` |
+| `match` | Request matcher (method, header, path) | `method GET` |
+| `key` | What to rate limit by | `{remote_host}`, `{http.request.header.API-Key}` |
+| `events` | Number of allowed requests | `3`, `100` |
+| `window` | Time window for the limit | `1m`, `1h`, `24h` |
+
+## Real-World Examples
+
+<CodeGroup>
+```caddyfile API Rate Limiting
+api.example.com {
+    # Mark AI scrapers for aggressive rate limiting
+    defender ratelimit {
+        ranges openai anthropic
+    }
+
+    rate_limit {
+        zone ai_limit {
+            match {
+                header X-RateLimit-Apply true
+            }
+            key {remote_host}
+            events 10
+            window 1h
+        }
+    }
+
+    respond "API endpoint"
+}
+```
+
+```caddyfile Multi-Tier Rate Limiting
+app.example.com {
+    # Tier 1: Slow rate for private networks
+    defender ratelimit {
+        ranges private
+    }
+
+    # Tier 2: Very slow rate for cloud providers
+    defender ratelimit {
+        ranges aws google-cloud azure
+    }
+
+    rate_limit {
+        zone tier1 {
+            match {
+                header X-RateLimit-Apply true
+            }
+            key {remote_host}
+            events 100
+            window 1m
+        }
+
+        zone tier2 {
+            match {
+                header X-RateLimit-Apply true
+            }
+            key {remote_host}
+            events 10
+            window 1m
+        }
+    }
+
+    respond "Application content"
+}
+```
+
+```caddyfile Path-Specific Rate Limiting
+website.example.com {
+    defender ratelimit {
+        ranges known-scrapers
+    }
+
+    rate_limit {
+        zone scraper_limit {
+            match {
+                path /api/*
+                header X-RateLimit-Apply true
+            }
+            key {remote_host}
+            events 5
+            window 10m
+        }
+    }
+
+    file_server
+}
+```
+</CodeGroup>
+
+## Rate Limit Keys
+
+You can rate limit based on different request attributes:
+
+<CodeGroup>
+```caddyfile By IP Address
+key {remote_host}
+```
+
+```caddyfile By API Key
+key {http.request.header.API-Key}
+```
+
+```caddyfile By User Agent
+key {http.request.header.User-Agent}
+```
+
+```caddyfile By Path
+key {http.request.uri.path}
+```
+
+```caddyfile Composite Key
+key {remote_host}-{http.request.uri.path}
+```
+</CodeGroup>
+
+## Advanced Integration
+
+<Note>
+  For complete rate limiting documentation, see the [Rate Limiting Configuration](/config#rate-limiting-configuration) and [caddy-ratelimit](https://github.com/mholt/caddy-ratelimit) documentation.
+</Note>
+
+### Custom Headers
+
+You can customize which header caddy-ratelimit looks for:
+
+```caddyfile
+defender ratelimit {
+    ranges openai
+    # Custom header can be configured in defender if supported
+}
+
+rate_limit {
+    zone custom {
+        match {
+            header X-Custom-RateLimit true
+        }
+        key {remote_host}
+        events 50
+        window 1h
+    }
+}
+```
+
+### Multiple Zones
+
+Apply different rate limits to different scenarios:
+
+```caddyfile
+defender ratelimit {
+    ranges aws google-cloud
+}
+
+rate_limit {
+    # Strict limit for API endpoints
+    zone api_strict {
+        match {
+            path /api/*
+            header X-RateLimit-Apply true
+        }
+        key {remote_host}
+        events 10
+        window 1m
+    }
+
+    # Lenient limit for static assets
+    zone static_lenient {
+        match {
+            path /static/*
+            header X-RateLimit-Apply true
+        }
+        key {remote_host}
+        events 100
+        window 1m
+    }
+}
+```

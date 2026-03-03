@@ -1,0 +1,273 @@
+---
+title: "Fetchers Overview"
+description: "Learn about the IP range fetcher system and how fetchers are used to retrieve IP ranges from various cloud providers and services"
+---
+
+## Overview
+
+The fetcher system in Caddy Defender provides a modular architecture for retrieving IP ranges from various cloud providers, AI services, VPN networks, and other sources. Each fetcher implements a common interface and can be executed concurrently to efficiently gather IP ranges.
+
+## IPRangeFetcher Interface
+
+All fetchers implement the `IPRangeFetcher` interface defined in `ranges/fetchers/fetcher.go:4`:
+
+```go
+type IPRangeFetcher interface {
+    Name() string                     // Returns the name of the service
+    Description() string              // Returns a short description of the service
+    FetchIPRanges() ([]string, error) // Fetches the IP ranges for the service
+}
+```
+
+### Interface Methods
+
+<ParamField path="Name()" type="string">
+  Returns the unique identifier for the fetcher. This name is used as the key in the generated IP ranges map. The name is automatically converted to lowercase in the output.
+</ParamField>
+
+<ParamField path="Description()" type="string">
+  Returns a human-readable description of what IP ranges this fetcher retrieves. This is displayed during the fetching process to provide visibility into progress.
+</ParamField>
+
+<ParamField path="FetchIPRanges()" type="([]string, error)">
+  Performs the actual fetching of IP ranges from the external source. Returns a slice of CIDR-formatted IP ranges (e.g., `"192.0.2.0/24"`, `"2001:db8::/32"`) or an error if the fetch fails.
+</ParamField>
+
+## How Fetchers Are Used
+
+Fetchers are executed in `ranges/main.go:34` where they are added to a `fetchersList` and run concurrently:
+
+```go
+fetchersList := []fetchers.IPRangeFetcher{
+    fetchers.VPNFetcher{},                  // Known VPN services
+    fetchers.LinodeFetcher{},               // Linode
+    fetchers.DigitalOceanFetcher{},         // Digital Ocean
+    fetchers.OpenAIFetcher{},               // OpenAI services
+    fetchers.DeepSeekFetcher{},             // DeepSeek
+    fetchers.OracleFetcher{},               // Oracle Cloud
+    fetchers.GithubCopilotFetcher{},        // GitHub Copilot
+    fetchers.AzurePublicCloudFetcher{},     // Azure Public Cloud
+    fetchers.GCloudFetcher{},               // Google Cloud Platform
+    aws.AWSFetcher{},                       // Global AWS IP ranges
+    aws.RegionFetcher{Region: "us-east-1"}, // us-east-1 region
+    aws.RegionFetcher{Region: "us-west-1"}, // us-west-1 region
+    fetchers.PrivateFetcher{},              // Private IP ranges (RFC 1918)
+    fetchers.AllFetcher{},                  // All IP ranges
+    fetchers.MistralFetcher{},              // Mistral IP ranges
+    fetchers.VultrFetcher{},                // Vultr Cloud IP ranges
+    fetchers.CloudflareFetcher{},           // Cloudflare IP ranges
+    fetchers.AliyunFetcher{},               // Aliyun IP ranges
+    fetchers.HuaweiCloudFetcher{},          // Huawei Cloud IP ranges
+}
+```
+
+### Concurrent Execution
+
+The main.go file executes all fetchers concurrently using goroutines (`ranges/main.go:92`):
+
+```go
+for _, fetcher := range fetchersList {
+    go func(f fetchers.IPRangeFetcher) {
+        defer wg.Done()
+        
+        fmt.Printf("🚀 Starting %s: %s\n", f.Name(), f.Description())
+        
+        ranges, err := f.FetchIPRanges()
+        if err != nil {
+            fmt.Printf("❌ Error fetching %s: %v\n", f.Name(), err)
+            return
+        }
+        
+        mu.Lock()
+        ipRanges[strings.ToLower(f.Name())] = ranges
+        mu.Unlock()
+        
+        fmt.Printf("✅ Completed %s: Fetched %d IP ranges\n", f.Name(), len(ranges))
+    }(fetcher)
+}
+```
+
+### Thread Safety
+
+A mutex (`mu sync.Mutex`) is used to safely update the shared `ipRanges` map from multiple goroutines, preventing race conditions when writing fetched data.
+
+## Available Fetchers
+
+### Cloud Providers
+
+- **AWS** (`aws.AWSFetcher`) - Global AWS IP ranges
+- **AWS Regions** (`aws.RegionFetcher`) - Region-specific AWS IP ranges
+- **Azure** (`fetchers.AzurePublicCloudFetcher`) - Azure Public Cloud
+- **Google Cloud** (`fetchers.GCloudFetcher`) - Google Cloud Platform
+- **Aliyun** (`fetchers.AliyunFetcher`) - Alibaba Cloud
+- **Huawei Cloud** (`fetchers.HuaweiCloudFetcher`) - Huawei Cloud
+- **Oracle Cloud** (`fetchers.OracleFetcher`) - Oracle Cloud Infrastructure
+- **DigitalOcean** (`fetchers.DigitalOceanFetcher`) - DigitalOcean
+- **Linode** (`fetchers.LinodeFetcher`) - Linode/Akamai
+- **Vultr** (`fetchers.VultrFetcher`) - Vultr Cloud
+- **Cloudflare** (`fetchers.CloudflareFetcher`) - Cloudflare network
+
+### AI Services
+
+- **OpenAI** (`fetchers.OpenAIFetcher`) - ChatGPT, GPTBot, SearchBot
+- **DeepSeek** (`fetchers.DeepSeekFetcher`) - DeepSeek AI
+- **Mistral** (`fetchers.MistralFetcher`) - Mistral AI
+- **GitHub Copilot** (`fetchers.GithubCopilotFetcher`) - GitHub Copilot
+
+### Network Services
+
+- **VPN** (`fetchers.VPNFetcher`) - Known VPN service IP ranges
+- **Tor** (`fetchers.TorFetcher`) - Tor exit nodes (optional, enabled via `--fetch-tor` flag)
+- **ASN** (`fetchers.ASNFetcher`) - Autonomous System Numbers (created via `--asn` flag)
+
+### Special Purpose
+
+- **Private** (`fetchers.PrivateFetcher`) - RFC 1918 private IP ranges
+- **All** (`fetchers.AllFetcher`) - All possible IP addresses (`0.0.0.0/0`, `::/0`)
+
+## Implementation Patterns
+
+### Simple Fetcher (Hardcoded Ranges)
+
+From `ranges/fetchers/private.go:12`:
+
+```go
+func (f PrivateFetcher) FetchIPRanges() ([]string, error) {
+    return []string{
+        "127.0.0.0/8",
+        "::1/128",
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "fd00::/8",
+    }, nil
+}
+```
+
+### HTTP API Fetcher
+
+From `ranges/fetchers/cloudflare.go:20`:
+
+```go
+func (f CloudflareFetcher) FetchIPRanges() ([]string, error) {
+    const url = "https://api.cloudflare.com/client/v4/ips"
+    
+    resp, err := http.Get(url)
+    if err != nil {
+        return nil, fmt.Errorf("failed to fetch Cloudflare IP ranges: %v", err)
+    }
+    defer resp.Body.Close()
+    
+    if resp.StatusCode != http.StatusOK {
+        return nil, fmt.Errorf("received non-200 status code from Cloudflare: %d", resp.StatusCode)
+    }
+    
+    var result struct {
+        Result struct {
+            IPv4CIDRs []string `json:"ipv4_cidrs"`
+            IPv6CIDRs []string `json:"ipv6_cidrs"`
+        } `json:"result"`
+        Success bool `json:"success"`
+    }
+    
+    if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+        return nil, fmt.Errorf("failed to unmarshal Cloudflare JSON: %v", err)
+    }
+    
+    ipRanges := make([]string, 0, len(result.Result.IPv4CIDRs)+len(result.Result.IPv6CIDRs))
+    ipRanges = append(ipRanges, result.Result.IPv4CIDRs...)
+    ipRanges = append(ipRanges, result.Result.IPv6CIDRs...)
+    
+    return ipRanges, nil
+}
+```
+
+### Multi-Source Fetcher
+
+From `ranges/fetchers/openai.go:19`:
+
+```go
+func (f OpenAIFetcher) FetchIPRanges() ([]string, error) {
+    urls := []string{
+        "https://openai.com/searchbot.json",
+        "https://openai.com/chatgpt-user.json",
+        "https://openai.com/gptbot.json",
+    }
+    
+    var allRanges []string
+    for _, url := range urls {
+        ranges, err := fetchOpenAIIPRanges(url)
+        if err != nil {
+            return nil, err
+        }
+        allRanges = append(allRanges, ranges...)
+    }
+    
+    return allRanges, nil
+}
+```
+
+### Configurable Fetcher
+
+From `ranges/fetchers/asn.go:24`:
+
+```go
+type ASNFetcher struct {
+    ASNs []string // List of ASNs in AS#### format
+}
+
+func NewASNFetcher(asns []string) *ASNFetcher {
+    // validate ASNs
+    if len(asns) == 0 {
+        return nil
+    }
+    for _, asn := range asns {
+        if !strings.HasPrefix(asn, "AS") {
+            panic(fmt.Sprintf("invalid ASN: %s. It must start with 'AS'.", asn))
+        }
+        if _, err := strconv.Atoi(asn[2:]); err != nil {
+            panic(fmt.Sprintf("invalid ASN: %s. The part after 'AS' is not a number.", asn))
+        }
+    }
+    
+    return &ASNFetcher{
+        ASNs: asns,
+    }
+}
+```
+
+## Output Format
+
+Fetched IP ranges are stored in a map structure where:
+- **Key**: Lowercase fetcher name (e.g., `"cloudflare"`, `"openai"`)
+- **Value**: Array of CIDR-formatted IP ranges
+
+This data is then written to `ranges/data/generated.go` in the format:
+
+```go
+var IPRanges = map[string][]string{
+    "cloudflare": {
+        "173.245.48.0/20",
+        "103.21.244.0/22",
+        "2400:cb00::/32",
+        // ...
+    },
+    "openai": {
+        "23.98.142.176/28",
+        "13.65.240.240/28",
+        // ...
+    },
+    // ...
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Create Custom Fetcher" icon="code" href="/api/fetchers/custom-fetcher">
+    Learn how to implement your own custom IP range fetcher
+  </Card>
+  <Card title="Configuration" icon="gear" href="/api/ip-ranges/overview">
+    Configure which fetchers to use in your setup
+  </Card>
+</CardGroup>

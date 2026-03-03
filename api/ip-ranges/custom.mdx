@@ -1,0 +1,281 @@
+---
+title: Custom IP Ranges
+description: How to use custom CIDR ranges and combine them with predefined IP ranges
+---
+
+## Custom CIDR Notation
+
+In addition to predefined IP ranges, Caddy Defender supports custom CIDR notation for precise IP blocking.
+
+## Basic Syntax
+
+You can specify custom IP ranges directly in your Caddyfile:
+
+```caddy
+defender block {
+    ranges 203.0.113.0/24 198.51.100.0/24
+}
+```
+
+### CIDR Format
+
+CIDR (Classless Inter-Domain Routing) notation consists of:
+- An IP address: `203.0.113.0`
+- A slash: `/`
+- A prefix length: `24`
+
+The prefix length indicates how many bits are used for the network portion:
+- `/32` = Single IP address (e.g., `192.168.1.1/32`)
+- `/24` = 256 IP addresses (e.g., `192.168.1.0/24`)
+- `/16` = 65,536 IP addresses (e.g., `192.168.0.0/16`)
+- `/8` = 16,777,216 IP addresses (e.g., `10.0.0.0/8`)
+
+## Validation
+
+Custom CIDR ranges are validated during configuration loading. The validation logic is in `config.go:228-240`:
+
+```go
+for _, ipRange := range m.Ranges {
+    // Check if the range is a predefined key (e.g., "openai")
+    if _, ok := data.IPRanges[ipRange]; ok {
+        // If it's a predefined key, skip CIDR validation
+        continue
+    }
+    
+    // Otherwise, treat it as a custom CIDR and validate it
+    _, _, err := net.ParseCIDR(ipRange)
+    if err != nil {
+        return fmt.Errorf("invalid IP range %q: %v", ipRange, err)
+    }
+}
+```
+
+### What Gets Validated
+
+<AccordionGroup>
+  <Accordion title="Predefined Keys">
+    If a range matches a key in the `IPRanges` map (like `openai`, `aws`, etc.), it's used directly without validation.
+    
+    ```caddy
+    defender block {
+        ranges openai  # ✓ Valid - predefined key
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Custom CIDR Blocks">
+    If not found in the predefined map, the value is parsed as CIDR notation using Go's `net.ParseCIDR`.
+    
+    ```caddy
+    defender block {
+        ranges 203.0.113.0/24  # ✓ Valid CIDR
+        ranges 198.51.100.42/32  # ✓ Valid single IP
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Invalid Ranges">
+    Invalid CIDR notation or unknown keys will cause configuration errors.
+    
+    ```caddy
+    defender block {
+        ranges 203.0.113.0  # ✗ Invalid - missing prefix
+        ranges unknown-key  # ✗ Invalid - not in IPRanges map
+        ranges 256.1.1.1/24  # ✗ Invalid - invalid IP address
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Combining Predefined and Custom Ranges
+
+You can mix predefined keys with custom CIDR blocks:
+
+```caddy
+defender block {
+    # Combine OpenAI ranges with custom IPs
+    ranges openai 203.0.113.0/24 198.51.100.0/24
+}
+```
+
+```caddy
+defender block {
+    # Block cloud providers plus specific troublesome IPs
+    ranges aws gcloud azure 45.79.19.0/24 104.131.0.0/16
+}
+```
+
+## IPv6 Support
+
+Caddy Defender supports both IPv4 and IPv6 CIDR notation:
+
+```caddy
+defender block {
+    # IPv4 ranges
+    ranges 203.0.113.0/24
+    
+    # IPv6 ranges
+    ranges 2001:db8::/32
+    
+    # Both together
+    ranges 203.0.113.0/24 2001:db8::/32
+}
+```
+
+<Note>
+  Many predefined ranges (like `gcloud`, `cloudflare`) already include both IPv4 and IPv6 ranges.
+</Note>
+
+## Common CIDR Examples
+
+<CardGroup cols={2}>
+  <Card title="Single IP" icon="1">
+    ```caddy
+    ranges 192.168.1.100/32
+    ```
+    Blocks exactly one IP address
+  </Card>
+  
+  <Card title="Small Network" icon="network-wired">
+    ```caddy
+    ranges 192.168.1.0/24
+    ```
+    Blocks 256 addresses (192.168.1.0 - 192.168.1.255)
+  </Card>
+  
+  <Card title="Medium Network" icon="sitemap">
+    ```caddy
+    ranges 10.0.0.0/16
+    ```
+    Blocks 65,536 addresses (10.0.0.0 - 10.0.255.255)
+  </Card>
+  
+  <Card title="Large Network" icon="globe">
+    ```caddy
+    ranges 10.0.0.0/8
+    ```
+    Blocks 16,777,216 addresses (10.0.0.0 - 10.255.255.255)
+  </Card>
+</CardGroup>
+
+## Real-World Examples
+
+### Block Specific Datacenter
+
+```caddy
+defender block {
+    # Block a specific hostile datacenter range
+    ranges 45.79.19.0/24 104.131.0.0/16
+}
+```
+
+### Block Internal Network Access
+
+```caddy
+defender block {
+    # Block access from your internal networks
+    ranges 192.168.0.0/16 10.0.0.0/8 172.16.0.0/12
+}
+```
+
+### Geographic Blocking (with external list)
+
+```caddy
+defender block {
+    # Block IP ranges from a specific country
+    # (ranges obtained from external source)
+    ranges 203.0.113.0/24 198.51.100.0/24 192.0.2.0/24
+}
+```
+
+### Temporary Block During Attack
+
+```caddy
+defender block {
+    # Quickly block attacking IPs during incident
+    ranges 198.51.100.42/32 203.0.113.17/32
+}
+```
+
+## CIDR Tools and Resources
+
+<AccordionGroup>
+  <Accordion title="CIDR Calculators">
+    - [CIDR to IPv4 Converter](https://www.ipaddressguide.com/cidr)
+    - [Subnet Calculator](https://www.subnet-calculator.com/)
+    - [IP Range to CIDR](https://www.ipaddressguide.com/ip-range-to-cidr)
+  </Accordion>
+
+  <Accordion title="IP Range Lists">
+    - [IPdeny](https://www.ipdeny.com/ipblocks/) - Country-level IP blocks
+    - [Team Cymru](https://www.team-cymru.com/ip-asn-mapping) - ASN to IP mappings
+    - [MaxMind GeoLite2](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data) - Geographic IP data
+  </Accordion>
+
+  <Accordion title="Verification Tools">
+    Test if an IP is in a CIDR range:
+    ```bash
+    # Using ipcalc
+    ipcalc 203.0.113.0/24 -c 203.0.113.15
+    
+    # Using Python
+    python -c "import ipaddress; print('203.0.113.15' in ipaddress.ip_network('203.0.113.0/24'))"
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Performance Considerations
+
+<Note>
+  **Optimal Performance**: Custom CIDR ranges are processed the same way as predefined ranges, so there's no performance difference. However:
+  
+  - Fewer, larger CIDR blocks are more efficient than many individual IPs
+  - Use `/32` for single IPs sparingly - combine into larger blocks when possible
+  - Consider creating a predefined range for frequently used custom blocks
+</Note>
+
+## Creating Your Own Predefined Ranges
+
+If you have a set of custom ranges you use frequently, you can add them to the build process:
+
+1. Create a new fetcher in `ranges/fetchers/`:
+   ```go
+   package fetchers
+   
+   type MyCustomFetcher struct{}
+   
+   func (f MyCustomFetcher) Name() string {
+       return "mycustom"
+   }
+   
+   func (f MyCustomFetcher) Description() string {
+       return "My custom IP ranges"
+   }
+   
+   func (f MyCustomFetcher) FetchIPRanges() ([]string, error) {
+       return []string{
+           "203.0.113.0/24",
+           "198.51.100.0/24",
+       }, nil
+   }
+   ```
+
+2. Add it to `ranges/main.go:34-55`:
+   ```go
+   fetchersList := []fetchers.IPRangeFetcher{
+       // ... other fetchers
+       fetchers.MyCustomFetcher{},
+   }
+   ```
+
+3. Rebuild the ranges:
+   ```bash
+   go run ranges/main.go
+   ```
+
+4. Use it in your Caddyfile:
+   ```caddy
+   defender block {
+       ranges mycustom
+   }
+   ```

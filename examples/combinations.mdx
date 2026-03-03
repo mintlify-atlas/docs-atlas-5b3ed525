@@ -1,0 +1,362 @@
+---
+title: 'Combining Strategies'
+description: 'Mix multiple response strategies for layered defense and sophisticated traffic management'
+---
+
+## Overview
+
+Caddy Defender allows you to use multiple responder strategies within a single configuration. This enables sophisticated, layered defense mechanisms that treat different types of traffic differently.
+
+<Info>
+  Multiple defender directives can be used in the same server block. They are evaluated in order and the first match takes effect.
+</Info>
+
+## When to Use Multiple Strategies
+
+Use combined strategies when:
+- Different threats require different responses
+- You want a layered defense approach
+- You need varying levels of restriction for different IP ranges
+- You want to balance blocking, throttling, and deception
+
+## Basic Combination Example
+
+<Tabs>
+  <Tab title="Caddyfile">
+    ```caddyfile
+    example.com {
+        defender block {
+            ranges known-bad-actors
+        }
+
+        defender ratelimit {
+            ranges aws
+        }
+
+        defender garbage {
+            ranges scrapers
+        }
+
+        respond "Main Website Content"
+    }
+    ```
+
+    This configuration:
+    1. **Blocks** known malicious actors completely with 403 Forbidden
+    2. **Rate limits** AWS traffic (legitimate but needs throttling)
+    3. **Serves garbage** to known scrapers (wastes their resources)
+    4. **Serves real content** to everyone else
+  </Tab>
+
+  <Tab title="JSON">
+    ```json
+    {
+        "handler": "subroute",
+        "routes": [
+            {
+                "handle": [
+                    {
+                        "handler": "defender",
+                        "raw_responder": "block",
+                        "ranges": ["known-bad-actors"]
+                    }
+                ]
+            },
+            {
+                "handle": [
+                    {
+                        "handler": "defender",
+                        "raw_responder": "ratelimit",
+                        "ranges": ["aws"]
+                    }
+                ]
+            },
+            {
+                "handle": [
+                    {
+                        "handler": "defender",
+                        "raw_responder": "garbage",
+                        "ranges": ["scrapers"]
+                    }
+                ]
+            }
+        ]
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Advanced Layered Defense
+
+<CodeGroup>
+```caddyfile Multi-Tier Protection
+api.example.com {
+    # Layer 1: Block the worst offenders immediately
+    defender block {
+        ranges known-bad-actors malicious-ips
+    }
+
+    # Layer 2: Tarpit AI scrapers (waste their time)
+    defender tarpit {
+        ranges openai anthropic
+        tarpit_config {
+            content file://fake-api-data.json
+            bytes_per_second 10
+            timeout 120s
+        }
+    }
+
+    # Layer 3: Rate limit cloud providers
+    defender ratelimit {
+        ranges aws google-cloud azure
+    }
+
+    # Layer 4: Redirect suspicious patterns
+    defender redirect {
+        ranges scrapers
+        url "https://honeypot.example.com"
+    }
+
+    # Serve real API to legitimate traffic
+    reverse_proxy localhost:3000
+}
+```
+
+```caddyfile Content-Based Strategy
+website.example.com {
+    # Block known threats
+    defender block {
+        ranges known-bad-actors
+    }
+
+    # Serve garbage to AI training crawlers
+    defender garbage {
+        ranges openai anthropic google
+    }
+
+    # Custom 404 for competitors
+    defender custom {
+        ranges competitor-networks
+        message "Page not found"
+        status_code 404
+    }
+
+    # Rate limit everyone else
+    defender ratelimit {
+        ranges private
+    }
+
+    file_server {
+        root /var/www/html
+    }
+}
+```
+
+```caddyfile Geographic Strategy
+global.example.com {
+    # Block regions with no legitimate traffic
+    defender block {
+        ranges high-risk-countries
+    }
+
+    # Redirect internal networks to intranet
+    defender redirect {
+        ranges private
+        url "https://intranet.example.com"
+    }
+
+    # Tarpit cloud providers (likely bots)
+    defender tarpit {
+        ranges aws azure google-cloud
+        tarpit_config {
+            bytes_per_second 5
+            timeout 60s
+        }
+    }
+
+    respond "Global content"
+}
+```
+</CodeGroup>
+
+## Whitelisting with Combinations
+
+Combine whitelisting with multiple strategies for fine-grained control:
+
+```caddyfile
+{
+    auto_https off
+    order defender after header
+    debug
+}
+
+:80 {
+    bind 127.0.0.1 ::1
+
+    # Block all AWS except specific trusted IPs
+    defender block {
+        ranges aws
+        whitelist 169.254.169.254 # Trusted EC2 instance
+    }
+
+    # Tarpit all private networks except localhost
+    defender tarpit {
+        ranges private
+        whitelist 127.0.0.1
+        tarpit_config {
+            bytes_per_second 1
+            timeout 300s
+        }
+    }
+
+    respond "Protected content"
+}
+
+:81 {
+    bind 127.0.0.1 ::1
+
+    # Block private IPv6 but not IPv4
+    defender block {
+        ranges private
+        whitelist 127.0.0.1
+    }
+
+    respond "This is what a ipv4 human sees"
+}
+```
+
+## Order of Execution
+
+<Note>
+  Defender directives are evaluated in the order they appear. The first matching range triggers its responder, and no further defender directives are evaluated for that request.
+</Note>
+
+### Execution Flow
+
+1. Request arrives
+2. First defender directive checks if IP matches its ranges
+   - **If match**: Execute responder, stop processing other defenders
+   - **If no match**: Continue to next defender
+3. Repeat for each defender directive
+4. If no defenders match, continue to next handler
+
+### Example Order Matters
+
+```caddyfile
+example.com {
+    # This runs FIRST - blocks take priority
+    defender block {
+        ranges known-bad-actors
+    }
+
+    # This runs SECOND - only if not blocked
+    defender garbage {
+        ranges openai
+    }
+
+    # This runs THIRD - only if not blocked or garbage'd
+    defender ratelimit {
+        ranges aws
+    }
+
+    # This serves content if no defenders matched
+    respond "Legitimate content"
+}
+```
+
+## Real-World Production Example
+
+```caddyfile
+{
+    order defender after header
+    order rate_limit after basic_auth
+}
+
+production.example.com {
+    # Layer 1: Immediate blocking
+    defender block {
+        ranges known-bad-actors malicious-botnets
+    }
+
+    # Layer 2: Legal compliance
+    defender custom {
+        ranges embargoed-countries
+        message "This service is not available in your region due to legal restrictions"
+        status_code 451
+    }
+
+    # Layer 3: AI/ML defense
+    defender tarpit {
+        ranges openai anthropic google
+        tarpit_config {
+            content file://misleading-training-data.json
+            bytes_per_second 5
+            timeout 180s
+            headers {
+                Cache-Control "no-cache"
+                X-Robots-Tag "noindex, nofollow"
+            }
+        }
+    }
+
+    # Layer 4: Cloud provider throttling
+    defender ratelimit {
+        ranges aws azure google-cloud
+    }
+
+    rate_limit {
+        zone cloud_providers {
+            match {
+                header X-RateLimit-Apply true
+            }
+            key {remote_host}
+            events 50
+            window 1m
+        }
+    }
+
+    # Layer 5: General scraper defense
+    defender garbage {
+        ranges known-scrapers
+        serve_ignore
+    }
+
+    # Serve real application
+    reverse_proxy localhost:8080
+}
+```
+
+This production configuration:
+1. Blocks confirmed threats immediately
+2. Complies with legal requirements
+3. Actively defends against AI training
+4. Throttles cloud provider traffic
+5. Wastes scraper resources
+6. Serves legitimate users normally
+
+## Testing Combined Strategies
+
+<Note>
+  When testing combined strategies, verify each layer independently before combining them. Use the debug mode and check logs to ensure rules are evaluated in the expected order.
+</Note>
+
+```caddyfile
+{
+    auto_https off
+    order defender after header
+    debug  # Enable debug logging
+}
+
+:8080 {
+    # Test each strategy with different ports or paths
+    defender block {
+        ranges 192.168.1.0/24
+    }
+
+    defender garbage {
+        ranges 192.168.2.0/24
+    }
+
+    respond "Testing combined strategies"
+}
+```
